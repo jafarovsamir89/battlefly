@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#050913" />
+    <title>Vector Fleet</title>
+  </head>
+  <body>
+    <main id="app">
+      <div id="game" aria-label="Игровое поле Vector Fleet"></div>
+
+      <div id="hud" aria-live="polite">
+        <header id="topbar" class="glass-panel">
+          <div class="brand-lockup">
+            <span class="brand-mark">VF</span>
+            <div>
+              <strong>VECTOR FLEET</strong>
+              <small>тактический протокол / раунд <span id="round-value">1</span></small>
+            </div>
+          </div>
+          <div id="turn-value" class="turn-value">Ваш ход</div>
+          <div class="score-lockup">
+            <span class="score-player"><i></i>Вы <b id="player-score">0</b></span>
+            <span class="score-divider">:</span>
+            <span class="score-bot"><b id="bot-score">0</b> Бот <i></i></span>
+          </div>
+        </header>
+
+        <aside id="ship-panel" class="glass-panel hidden">
+          <div class="panel-kicker">ВЫБРАННЫЙ КОРАБЛЬ</div>
+          <div class="ship-heading">
+            <span id="ship-class-icon" class="ship-class-icon">◇</span>
+            <div>
+              <strong id="ship-name">Разведчик</strong>
+              <small id="ship-role">быстрый прорыв</small>
+            </div>
+          </div>
+          <div class="stat-row"><span>Щит</span><strong id="ship-shield">●</strong></div>
+          <div class="stat-row"><span>Корпус</span><strong id="ship-hull">●</strong></div>
+          <div class="energy-row"><span>Энергия</span><strong id="ship-energy">100 / 100</strong></div>
+          <div class="meter"><span id="energy-meter"></span></div>
+          <div id="aim-cost" class="aim-cost">Потяните от корабля, чтобы проложить курс</div>
+        </aside>
+
+        <aside id="route-panel" class="glass-panel hidden">
+          <div class="panel-kicker">ДЕЙСТВИЕ С СЕТЬЮ</div>
+          <div class="route-actions">
+            <button class="route-button active" data-route-action="create" type="button">Новая линия</button>
+            <button class="route-button" data-route-action="extend" type="button">Продлить</button>
+            <button class="route-button" data-route-action="cut" type="button">Перерезать</button>
+          </div>
+          <div id="route-action-help">Создайте маршрут для следующего хода.</div>
+        </aside>
+
+        <div id="reactor-panel" class="glass-panel">
+          <span class="reactor-dot"></span>
+          <span>РЕАКТОР</span>
+          <strong id="reactor-value">нейтрален</strong>
+        </div>
+
+        <div id="hint-panel" class="glass-panel">
+          <span class="hint-key">МЫШЬ / ПАЛЕЦ</span>
+          <span id="hint-value">Выберите корабль, затем потяните в обратную сторону</span>
+        </div>
+
+        <div id="actions">
+          <button id="sound-button" class="icon-button" type="button" aria-label="Включить звук">Звук: выкл.</button>
+          <button id="new-game-button" class="primary-button" type="button">Новая игра</button>
+        </div>
+
+        <section id="result-panel" class="glass-panel hidden">
+          <span class="panel-kicker">БОЕВОЙ ПРОТОКОЛ ЗАВЕРШЁН</span>
+          <h1 id="result-title">Победа</h1>
+          <p id="result-copy">Флот противника выведен из боя.</p>
+          <div id="result-stats"></div>
+          <button id="result-button" class="primary-button" type="button">Начать новый бой</button>
+        </section>
+      </div>
+
+      <div id="boot-status">
+        <div class="boot-card">
+          <span class="brand-mark">VF</span>
+          <h1>Инициализация Vector Fleet</h1>
+          <p id="boot-message">Поднимаем тактический стол…</p>
+        </div>
+      </div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

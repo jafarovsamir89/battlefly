@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Космические линии — Phaser-прототип</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #030712;
+      font-family: Inter, system-ui, sans-serif;
+    }
+    #game { width: 100%; height: 100%; }
+    canvas { display: block; }
+    #boot-status {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      color: #e2e8f0;
+      background:
+        radial-gradient(circle at 25% 20%, rgba(14,165,233,.16), transparent 32%),
+        radial-gradient(circle at 80% 75%, rgba(168,85,247,.12), transparent 34%),
+        #030712;
+      text-align: center;
+    }
+    #boot-card {
+      width: min(92vw, 640px);
+      padding: 24px;
+      border: 1px solid rgba(148,163,184,.22);
+      border-radius: 18px;
+      background: rgba(15,23,42,.82);
+      box-shadow: 0 24px 80px rgba(0,0,0,.42);
+    }
+    #boot-title { font-size: 22px; font-weight: 800; margin-bottom: 10px; }
+    #boot-message { color: #aebfd3; line-height: 1.5; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+<div id="game"></div>
+<div id="boot-status">
+  <div id="boot-card">
+    <div id="boot-title">Запуск космической битвы…</div>
+    <div id="boot-message">Загружаю игровой движок Phaser.</div>
+  </div>
+</div>
+
+<script>
+window.startSpaceGame = function () {
+try {
+  const GAME_W = 1280;
+  const GAME_H = 720;
+
+  class BattleScene extends Phaser.Scene {
+    constructor() {
+      super('BattleScene');
+      this.turn = 'player';
+      this.selected = null;
+      this.dragPoint = null;
+      this.busy = false;
+      this.playerShips = [];
+      this.botShips = [];
+      this.trails = [];
+      this.homeY = { player: GAME_H - 88, bot: 88 };
+      this.baseLineY = { player: GAME_H - 132, bot: 132 };
+    }
+
+    create() {
+      this.cameras.main.setBackgroundColor('#030712');
+      this.createStarfield();
+      this.createTextures();
+      this.createArena();
+      this.createUI();
+      this.createFleet();
+      this.setupInput();
+      this.updateHUD('Ваш ход — потяните корабль назад и отпустите');
+      window.__spaceReady = true;
+      hideBoot();
+    }
+
+    createStarfield() {
+      const g = this.add.graphics();
+      g.fillGradientStyle(0x071426, 0x071426, 0x020617, 0x020617, 1);
+      g.fillRect(0, 0, GAME_W, GAME_H);
+
+      for (let i = 0; i < 150; i++) {
+        const x = Phaser.Math.Between(0, GAME_W);
+        const y = Phaser.Math.Between(0, GAME_H);
+        const r = Phaser.Math.FloatBetween(0.6, 2.1);
+        const a = Phaser.Math.FloatBetween(0.25, 0.9);
+        this.add.circle(x, y, r, 0xffffff, a);
+      }
+
+      this.add.ellipse(230, 230, 440, 260, 0x0ea5e9, 0.06);
+      this.add.ellipse(1060, 500, 520, 300, 0xa855f7, 0.05);
+    }
+
+    createTextures() {
+      const g = this.make.graphics({x: 0, y: 0, add: false});
+
+      g.clear();
+      g.fillStyle(0xffffff, 1);
+      g.fillCircle(18, 18, 18);
+      g.generateTexture('spark', 36, 36);
+
+      g.clear();
+      g.fillStyle(0xffffff, 1);
+      g.fillTriangle(28, 4, 4, 16, 28, 28);
+      g.fillCircle(23, 16, 8);
+      g.generateTexture('ship', 34, 32);
+
+      g.clear();
+      g.fillStyle(0xffffff, 1);
+      g.fillCircle(12, 12, 12);
+      g.generateTexture('particle', 24, 24);
+    }
+
+    createArena() {
+      this.arena = this.add.graphics();
+
+      this.arena.fillStyle(0x0b1220, 0.72);
+      this.arena.fillRoundedRect(28, 28, GAME_W - 56, GAME_H - 56, 26);
+
+      this.arena.lineStyle(2, 0x38bdf8, 0.18);
+      this.arena.strokeRoundedRect(28, 28, GAME_W - 56, GAME_H - 56, 26);
+
+      this.drawBase(this.baseLineY.bot, 0xfb7185, 'БАЗА БОТА');
+      this.drawBase(this.baseLineY.player, 0x38bdf8, 'ВАША БАЗА');
+
+      this.obstacles = [
+        this.makeAsteroid(250, 250, 44),
+        this.makeAsteroid(510, 330, 56),
+        this.makeAsteroid(800, 250, 38),
+        this.makeAsteroid(1010, 390, 54),
+        this.makeAsteroid(675, 520, 34),
+        this.makeAsteroid(330, 500, 31),
+      ];
+    }
+
+    drawBase(y, color, label) {
+      const zone = this.add.rectangle(GAME_W/2, y, GAME_W - 80, 68, color, 0.055);
+      zone.setStrokeStyle(2, color, 0.2);
+
+      const line = this.add.graphics();
+      line.lineStyle(3, color, 0.9);
+      for (let x = 55; x < GAME_W - 55; x += 28) {
+        line.lineBetween(x, y, x + 15, y);
+      }
+
+      this.add.text(58, y - 26, label, {
+        fontSize: '15px',
+        fontStyle: 'bold',
+        color: '#' + color.toString(16).padStart(6, '0')
+      }).setAlpha(0.9);
+    }
+
+    makeAsteroid(x, y, r) {
+      const shadow = this.add.circle(x + 8, y + 10, r + 5, 0x000000, 0.28);
+      const rock = this.add.circle(x, y, r, 0x64748b, 1);
+      rock.setStrokeStyle(4, 0x94a3b8, 0.45);
+      this.add.circle(x - r * .25, y - r * .18, r * .2, 0x334155, .65);
+      this.add.circle(x + r * .22, y + r * .16, r * .14, 0x334155, .55);
+
+      this.tweens.add({
+        targets: [rock, shadow],
+        angle: 360,
+        duration: Phaser.Math.Between(22000, 36000),
+        repeat: -1
+      });
+
+      return { x, y, r, display: rock };
+    }
+
+    createUI() {
+      this.hud = this.add.container(24, 18).setDepth(100);
+      const panel = this.add.rectangle(0, 0, 560, 54, 0x020617, .72)
+        .setOrigin(0, 0)
+        .setStrokeStyle(1, 0x94a3b8, .16);
+      this.statusText = this.add.text(18, 16, '', {
+        fontSize: '18px',
+        color: '#e2e8f0'
+      });
+      this.hud.add([panel, this.statusText]);
+
+      const btn = this.add.rectangle(GAME_W - 142, 45, 200, 46, 0x0ea5e9, .92)
+        .setDepth(100)
+        .setInteractive({useHandCursor: true});
+      const txt = this.add.text(GAME_W - 142, 45, 'Новая игра', {
+        fontSize: '17px',
+        fontStyle: 'bold',
+        color: '#00111f'
+      }).setOrigin(.5).setDepth(101);
+
+      btn.on('pointerover', () => btn.setFillStyle(0x38bdf8, 1));
+      btn.on('pointerout', () => btn.setFillStyle(0x0ea5e9, .92));
+      btn.on('pointerdown', () => this.scene.restart());
+
+      this.scoreText = this.add.text(GAME_W/2, 44, '', {
+        fontSize: '17px',
+        color: '#cbd5e1'
+      }).setOrigin(.5).setDepth(100);
+    }
+
+    createFleet() {
+      const xs = [250, 445, 640, 835, 1030];
+      xs.forEach((x, i) => this.playerShips.push(this.makeShip('player', x, this.homeY.player, i)));
+      xs.forEach((x, i) => this.botShips.push(this.makeShip('bot', x, this.homeY.bot, i)));
+      this.refreshScore();
+    }
+
+    makeShip(owner, x, y, id) {
+      const color = owner === 'player' ? 0x38bdf8 : 0xfb7185;
+      const glow = this.add.circle(x, y, 27, color, .14);
+      const ship = this.physics.add.image(x, y, 'ship');
+      ship.setTint(color);
+      ship.setScale(owner === 'player' ? 1.12 : 1.12);
+      ship.setRotation(owner === 'player' ? -Math.PI/2 : Math.PI/2);
+      ship.setCircle(15);
+      ship.setBounce(.45);
+      ship.setDrag(120);
+      ship.setMaxVelocity(700);
+      ship.body.setAllowGravity(false);
+
+      const data = {
+        owner, id, ship, glow,
+        alive: true,
+        delivered: false,
+        homeX: x, homeY: y
+      };
+
+      ship.setData('unit', data);
+
+      this.tweens.add({
+        targets: glow,
+        scale: {from: .85, to: 1.18},
+        alpha: {from: .08, to: .18},
+        duration: 1000,
+        yoyo: true,
+        repeat: -1,
+        delay: id * 100
+      });
+
+      return data;
+    }
+
+    setupInput() {
+      this.input.on('pointerdown', pointer => {
+        if (this.turn !== 'player' || this.busy) return;
+
+        const hit = this.playerShips.find(u =>
+          u.alive && !u.delivered &&
+          Phaser.Math.Distance.Between(pointer.worldX, pointer.worldY, u.ship.x, u.ship.y) < 34
+        );
+
+        if (hit) {
+          this.selected = hit;
+          this.dragPoint = new Phaser.Math.Vector2(pointer.worldX, pointer.worldY);
+          this.aimGraphics = this.add.graphics().setDepth(80);
+        }
+      });
+
+      this.input.on('pointermove', pointer => {
+        if (!this.selected) return;
+        this.dragPoint.set(pointer.worldX, pointer.worldY);
+        this.drawAim();
+      });
+
+      this.input.on('pointerup', pointer => {
+        if (!this.selected) return;
+
+        const dx = this.selected.ship.x - pointer.worldX;
+        const dy = this.selected.ship.y - pointer.worldY;
+        const distance = Math.min(Math.hypot(dx, dy), 210);
+
+        if (distance < 16) {
+          this.clearAim();
+          return;
+        }
+
+        const len = Math.max(1, Math.hypot(dx, dy));
+        const speed = distance * 3.1;
+        this.launchUnit(this.selected, dx / len * speed, dy / len * speed);
+        this.clearAim();
+      });
+    }
+
+    drawAim() {
+      if (!this.aimGraphics || !this.selected) return;
+      this.aimGraphics.clear();
+
+      const sx = this.selected.ship.x;
+      const sy = this.selected.ship.y;
+      const dx = sx - this.dragPoint.x;
+      const dy = sy - this.dragPoint.y;
+      const len = Math.max(1, Math.hypot(dx, dy));
+      const power = Math.min(len, 210);
+      const ex = sx + dx / len * power;
+      const ey = sy + dy / len * power;
+
+      this.aimGraphics.lineStyle(4, 0x38bdf8, .9);
+      this.aimGraphics.lineBetween(sx, sy, ex, ey);
+
+      this.aimGraphics.fillStyle(0x38bdf8, .85);
+      this.aimGraphics.fillCircle(ex, ey, 7);
+
+      this.aimGraphics.lineStyle(2, 0xffffff, .22);
+      this.aimGraphics.lineBetween(sx, sy, this.dragPoint.x, this.dragPoint.y);
+    }
+
+    clearAim() {
+      if (this.aimGraphics) this.aimGraphics.destroy();
+      this.aimGraphics = null;
+      this.selected = null;
+      this.dragPoint = null;
+    }
+
+    launchUnit(unit, vx, vy) {
+      this.busy = true;
+      this.turn = 'animating';
+      unit.ship.setVelocity(vx, vy);
+      this.updateHUD(unit.owner === 'player' ? 'Ваш корабль в движении…' : 'Ход бота…');
+
+      unit.trailEvent = this.time.addEvent({
+        delay: 22,
+        loop: true,
+        callback: () => this.emitTrail(unit)
+      });
+
+      this.time.delayedCall(100, () => this.monitorMovement(unit));
+    }
+
+    emitTrail(unit) {
+      if (!unit.alive || unit.delivered) return;
+      const color = unit.owner === 'player' ? 0x38bdf8 : 0xfb7185;
+      const p = this.add.circle(unit.ship.x, unit.ship.y, 5, color, .45).setDepth(4);
+      this.tweens.add({
+        targets: p,
+        alpha: 0,
+        scale: .2,
+        duration: 520,
+        onComplete: () => p.destroy()
+      });
+    }
+
+    monitorMovement(unit) {
+      if (!unit.alive || unit.delivered) return;
+
+      this.handleBounds(unit);
+      if (this.checkAsteroids(unit)) return;
+      if (this.checkEnemyCollision(unit)) return;
+      if (this.checkDelivery(unit)) return;
+
+      if (unit.ship.body.speed < 20) {
+        unit.ship.setVelocity(0, 0);
+        if (unit.trailEvent) unit.trailEvent.remove();
+        this.finishTurn(unit.owner);
+        return;
+      }
+
+      this.time.delayedCall(35, () => this.monitorMovement(unit));
+    }
+
+    handleBounds(unit) {
+      const s = unit.ship;
+      if (s.x < 54) { s.x = 54; s.setVelocityX(Math.abs(s.body.velocity.x) * .55); }
+      if (s.x > GAME_W - 54) { s.x = GAME_W - 54; s.setVelocityX(-Math.abs(s.body.velocity.x) * .55); }
+      if (s.y < 48) { s.y = 48; s.setVelocityY(Math.abs(s.body.velocity.y) * .55); }
+      if (s.y > GAME_H - 48) { s.y = GAME_H - 48; s.setVelocityY(-Math.abs(s.body.velocity.y) * .55); }
+      unit.glow.setPosition(s.x, s.y);
+    }
+
+    checkAsteroids(unit) {
+      for (const o of this.obstacles) {
+        const d = Phaser.Math.Distance.Between(unit.ship.x, unit.ship.y, o.x, o.y);
+        if (d < o.r + 18) {
+          const angle = Phaser.Math.Angle.Between(o.x, o.y, unit.ship.x, unit.ship.y);
+          unit.ship.x = o.x + Math.cos(angle) * (o.r + 21);
+          unit.ship.y = o.y + Math.sin(angle) * (o.r + 21);
+          unit.ship.setVelocity(
+            Math.cos(angle) * Math.max(140, unit.ship.body.speed * .55),
+            Math.sin(angle) * Math.max(140, unit.ship.body.speed * .55)
+          );
+          this.impactFx(unit.ship.x, unit.ship.y, 0x94a3b8, 12);
+          return false;
+        }
+      }
+      return false;
+    }
+
+    checkEnemyCollision(unit) {
+      const enemies = unit.owner === 'player' ? this.botShips : this.playerShips;
+
+      for (const enemy of enemies) {
+        if (!enemy.alive || enemy.delivered) continue;
+
+        const d = Phaser.Math.Distance.Between(unit.ship.x, unit.ship.y, enemy.ship.x, enemy.ship.y);
+        if (d < 34) {
+          enemy.alive = false;
+          enemy.ship.setVelocity(0, 0);
+          enemy.ship.disableBody(true, true);
+          enemy.glow.setVisible(false);
+
+          if (unit.trailEvent) unit.trailEvent.remove();
+          unit.ship.setVelocity(0, 0);
+
+          this.explosionFx(enemy.ship.x, enemy.ship.y, enemy.owner === 'player' ? 0x38bdf8 : 0xfb7185);
+          this.cameras.main.shake(220, .006);
+          this.flashMessage(unit.owner === 'player' ? 'КОРАБЛЬ УНИЧТОЖЕН!' : 'ВАШ КОРАБЛЬ УНИЧТОЖЕН!');
+
+          this.refreshScore();
+
+          this.time.delayedCall(450, () => this.returnToBase(unit));
+          return true;
+        }
+      }
+      return false;
+    }
+
+    returnToBase(unit) {
+      this.updateHUD('Удар успешен — корабль возвращается на базу');
+
+      const startX = unit.ship.x;
+      const startY = unit.ship.y;
+
+      this.tweens.add({
+        targets: [unit.ship, unit.glow],
+        x: unit.homeX,
+        y: unit.homeY,
+        duration: 720,
+        ease: 'Sine.easeInOut',
+        onUpdate: () => {
+          if (Math.random() > .5) this.emitTrail(unit);
+        },
+        onComplete: () => {
+          unit.ship.setVelocity(0, 0);
+          this.finishTurn(unit.owner);
+        }
+      });
+    }
+
+    checkDelivery(unit) {
+      const reached = unit.owner === 'player'
+        ? unit.ship.y < this.baseLineY.bot
+        : unit.ship.y > this.baseLineY.player;
+
+      if (!reached) return false;
+
+      unit.delivered = true;
+      unit.ship.setVelocity(0, 0);
+      if (unit.trailEvent) unit.trailEvent.remove();
+
+      this.portalFx(unit.ship.x, unit.ship.y, unit.owner === 'player' ? 0x38bdf8 : 0xfb7185);
+      unit.ship.setVisible(false);
+      unit.glow.setVisible(false);
+      this.refreshScore();
+
+      this.time.delayedCall(400, () => this.finishTurn(unit.owner));
+      return true;
+    }
+
+    finishTurn(owner) {
+      if (this.checkWinner()) return;
+
+      this.busy = false;
+
+      if (owner === 'player') {
+        this.turn = 'bot';
+        this.updateHUD('Бот рассчитывает траекторию…');
+        this.time.delayedCall(650, () => this.botMove());
+      } else {
+        this.turn = 'player';
+        this.updateHUD('Ваш ход — потяните корабль назад и отпустите');
+      }
+    }
+
+    botMove() {
+      const candidates = this.botShips.filter(u => u.alive && !u.delivered);
+      if (!candidates.length) return;
+
+      const unit = Phaser.Utils.Array.GetRandom(candidates);
+      const targets = this.playerShips.filter(u => u.alive && !u.delivered);
+
+      let tx = Phaser.Math.Between(140, GAME_W - 140);
+      let ty = this.baseLineY.player + 50;
+
+      if (targets.length && Math.random() < .68) {
+        const target = Phaser.Utils.Array.GetRandom(targets);
+        tx = target.ship.x + Phaser.Math.Between(-35, 35);
+        ty = target.ship.y + Phaser.Math.Between(-35, 35);
+      }
+
+      const dx = tx - unit.ship.x;
+      const dy = ty - unit.ship.y;
+      const len = Math.max(1, Math.hypot(dx, dy));
+      const speed = Phaser.Math.Between(430, 610);
+
+      this.launchUnit(unit, dx / len * speed, dy / len * speed);
+    }
+
+    explosionFx(x, y, color) {
+      for (let i = 0; i < 30; i++) {
+        const p = this.add.image(x, y, 'particle').setTint(i % 3 === 0 ? 0xffffff : color);
+        p.setScale(Phaser.Math.FloatBetween(.08, .22));
+        const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+        const dist = Phaser.Math.Between(60, 170);
+
+        this.tweens.add({
+          targets: p,
+          x: x + Math.cos(angle) * dist,
+          y: y + Math.sin(angle) * dist,
+          alpha: 0,
+          scale: 0,
+          duration: Phaser.Math.Between(450, 900),
+          ease: 'Cubic.easeOut',
+          onComplete: () => p.destroy()
+        });
+      }
+
+      const ring = this.add.circle(x, y, 12).setStrokeStyle(5, color, .9);
+      this.tweens.add({
+        targets: ring,
+        radius: 90,
+        alpha: 0,
+        duration: 520,
+        ease: 'Quad.easeOut',
+        onComplete: () => ring.destroy()
+      });
+    }
+
+    impactFx(x, y, color, count) {
+      for (let i = 0; i < count; i++) {
+        const p = this.add.circle(x, y, Phaser.Math.Between(2, 5), color, .8);
+        const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+        const dist = Phaser.Math.Between(20, 70);
+        this.tweens.add({
+          targets: p,
+          x: x + Math.cos(angle) * dist,
+          y: y + Math.sin(angle) * dist,
+          alpha: 0,
+          duration: 350,
+          onComplete: () => p.destroy()
+        });
+      }
+    }
+
+    portalFx(x, y, color) {
+      for (let i = 0; i < 4; i++) {
+        const ring = this.add.circle(x, y, 15 + i * 7).setStrokeStyle(3, color, .8 - i * .15);
+        this.tweens.add({
+          targets: ring,
+          scale: 2.8,
+          alpha: 0,
+          angle: 180,
+          delay: i * 70,
+          duration: 600,
+          onComplete: () => ring.destroy()
+        });
+      }
+    }
+
+    flashMessage(text) {
+      const banner = this.add.text(GAME_W/2, GAME_H/2, text, {
+        fontSize: '42px',
+        fontStyle: 'bold',
+        color: '#ffffff',
+        stroke: '#000000',
+        strokeThickness: 8
+      }).setOrigin(.5).setDepth(200).setScale(.6).setAlpha(0);
+
+      this.tweens.add({
+        targets: banner,
+        alpha: 1,
+        scale: 1,
+        duration: 170,
+        yoyo: true,
+        hold: 260,
+        onComplete: () => banner.destroy()
+      });
+    }
+
+    updateHUD(text) {
+      this.statusText.setText(text);
+    }
+
+    refreshScore() {
+      const pAlive = this.playerShips.filter(u => u.alive && !u.delivered).length;
+      const bAlive = this.botShips.filter(u => u.alive && !u.delivered).length;
+      const pDone = this.playerShips.filter(u => u.delivered).length;
+      const bDone = this.botShips.filter(u => u.delivered).length;
+      this.scoreText.setText(`Вы: ${pAlive} в бою · ${pDone} доставлено     Бот: ${bAlive} в бою · ${bDone} доставлено`);
+    }
+
+    checkWinner() {
+      const playerResolved = this.playerShips.every(u => !u.alive || u.delivered);
+      const botResolved = this.botShips.every(u => !u.alive || u.delivered);
+
+      if (!playerResolved && !botResolved) return false;
+
+      this.busy = true;
+      this.turn = 'over';
+
+      const won = botResolved;
+      this.updateHUD(won ? 'Победа! Флот противника выведен из игры.' : 'Поражение. Попробуйте другую тактику.');
+      this.flashMessage(won ? 'ПОБЕДА' : 'ПОРАЖЕНИЕ');
+      return true;
+    }
+
+    update() {
+      [...this.playerShips, ...this.botShips].forEach(u => {
+        if (!u.alive || u.delivered || !u.ship.visible) return;
+        u.glow.setPosition(u.ship.x, u.ship.y);
+
+        if (u.ship.body.speed > 25) {
+          u.ship.rotation = Math.atan2(u.ship.body.velocity.y, u.ship.body.velocity.x);
+        }
+      });
+    }
+  }
+
+  const config = {
+    type: Phaser.CANVAS,
+    parent: 'game',
+    width: GAME_W,
+    height: GAME_H,
+    backgroundColor: '#030712',
+    physics: {
+      default: 'arcade',
+      arcade: {
+        gravity: { y: 0 },
+        debug: false
+      }
+    },
+    scale: {
+      mode: Phaser.Scale.FIT,
+      autoCenter: Phaser.Scale.CENTER_BOTH
+    },
+    scene: [BattleScene]
+  };
+
+  window.__spaceReady = false;
+  window.__spaceGame = new Phaser.Game(config);
+} catch (error) {
+  showBootError('Ошибка запуска игры: ' + (error && error.message ? error.message : String(error)));
+  console.error(error);
+}
+};
+
+function hideBoot() {
+  const boot = document.getElementById('boot-status');
+  if (boot) boot.style.display = 'none';
+}
+
+function showBootError(message) {
+  const boot = document.getElementById('boot-status');
+  const title = document.getElementById('boot-title');
+  const body = document.getElementById('boot-message');
+  if (boot) boot.style.display = 'grid';
+  if (title) title.textContent = 'Игра не запустилась';
+  if (body) body.textContent = message;
+}
+
+window.addEventListener('error', event => {
+  if (!window.__spaceReady) {
+    showBootError('Ошибка JavaScript: ' + (event.message || 'неизвестная ошибка'));
+  }
+});
+
+window.addEventListener('unhandledrejection', event => {
+  if (!window.__spaceReady) {
+    const reason = event.reason && event.reason.message ? event.reason.message : String(event.reason || 'неизвестная ошибка');
+    showBootError('Ошибка запуска: ' + reason);
+  }
+});
+
+(function loadPhaser() {
+  const sources = [
+    'https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/phaser/3.90.0/phaser.min.js',
+    'https://unpkg.com/phaser@3.90.0/dist/phaser.min.js'
+  ];
+  let index = 0;
+  let finished = false;
+
+  function launch() {
+    if (finished || !window.Phaser) return;
+    finished = true;
+    window.startSpaceGame();
+  }
+
+  function tryNext() {
+    if (finished) return;
+    if (window.Phaser) {
+      launch();
+      return;
+    }
+
+    if (index >= sources.length) {
+      finished = true;
+      showBootError(
+        'Не удалось загрузить Phaser из интернета.\n' +
+        'Проверьте подключение, VPN, антивирус или блокировку CDN.'
+      );
+      return;
+    }
+
+    const sourceNumber = index + 1;
+    const body = document.getElementById('boot-message');
+    if (body) body.textContent = 'Загружаю игровой движок… источник ' + sourceNumber + ' из ' + sources.length;
+
+    const script = document.createElement('script');
+    script.src = sources[index++];
+    script.async = true;
+
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled || finished) return;
+      settled = true;
+      script.remove();
+      tryNext();
+    }, 4500);
+
+    script.onload = () => {
+      if (settled || finished) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      if (window.Phaser) launch();
+      else tryNext();
+    };
+
+    script.onerror = () => {
+      if (settled || finished) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      script.remove();
+      tryNext();
+    };
+
+    document.head.appendChild(script);
+  }
+
+  tryNext();
+})();
+</script>
+</body>
+</html>
