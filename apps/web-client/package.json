@@ -1,0 +1,20 @@
+{
+  "name": "@battlefly/web-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@battlefly/game-rules": "workspace:*",
+    "@battlefly/input": "workspace:*",
+    "@battlefly/simulation": "workspace:*",
+    "@battlefly/ui-core": "workspace:*",
+    "phaser": "^3.90.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "echo \"No tests\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}
+

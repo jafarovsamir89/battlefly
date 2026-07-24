@@ -1,22 +1,24 @@
 {
-  "name": "vector-fleet",
-  "version": "0.1.0",
+  "name": "battlefly",
   "private": true,
-  "type": "module",
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.0.0",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "eslint . --ext .ts"
-  },
-  "dependencies": {
-    "phaser": "^3.90.0"
+    "dev": "pnpm --filter @battlefly/web-client dev",
+    "build": "pnpm -r --sort --filter './packages/*' --filter './apps/*' run build",
+    "typecheck": "pnpm -r --sort --filter './packages/*' --filter './apps/*' exec tsc -p tsconfig.json --noEmit",
+    "test": "pnpm -r --sort --filter './packages/*' --filter './apps/*' run test",
+    "lint": "eslint . --ext .ts,.tsx,.js,.cjs --max-warnings=0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@typescript-eslint/eslint-plugin": "^8.18.0",
     "@typescript-eslint/parser": "^8.18.0",
     "eslint": "^8.57.1",
+    "prettier": "^3.6.2",
     "typescript": "^5.7.2",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "vitest": "^3.2.4"
   }
 }
+
