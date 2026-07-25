@@ -2,7 +2,7 @@
 
 Battlefly is a cross-platform real-time strategy game about commanding fleets, building an energy network, controlling strategic sectors, and destroying the enemy command core.
 
-The project is being designed from day one for:
+The project is designed from day one for:
 
 - Web browsers
 - Windows, macOS, and Linux
@@ -57,8 +57,31 @@ The first playable milestone is intentionally limited:
 - a complete 12–18 minute match;
 - mouse, touch, and gamepad/remote input foundations.
 
-The design source of truth is in [`docs/GAME_VISION.md`](docs/GAME_VISION.md).
+## Workspace
 
+- `apps/web-client` - Phaser 3 web client
+- `apps/game-server` - authoritative simulation shell for future multiplayer
+- `packages/simulation` - deterministic core simulation
+- `packages/game-rules` - balance and map data
+- `packages/shared-types` - serializable shared DTOs
+- `packages/networking` - protocol envelopes and helpers
+- `packages/input` - platform-neutral intents
+- `packages/ui-core` - neutral view models
+
+## Commands
+
+- `pnpm install`
+- `pnpm dev`
+- `pnpm build`
+- `pnpm typecheck`
+- `pnpm test`
+- `pnpm lint`
+
+## Status
+
+Milestone 0 establishes deterministic simulation, typed commands, a 10-sector test map, energy links, powered-node resolution, and a browser client with mouse, touch, and gamepad foundations.
+
+The design source of truth is in [`docs/GAME_VISION.md`](docs/GAME_VISION.md).
 The initial coding-agent brief is in [`docs/IMPLEMENTATION_PROMPT.md`](docs/IMPLEMENTATION_PROMPT.md).
 
 ## Project principle

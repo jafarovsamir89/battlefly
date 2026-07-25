@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Battlefly — Vector Fleet</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="shell">
+        <div id="game"></div>
+        <aside id="hud">
+          <section class="hud-card">
+            <div class="hud-eyebrow">Battlefly / Vector Fleet</div>
+            <h1>Deterministic foundation</h1>
+            <p id="hud-status">Loading simulation...</p>
+          </section>
+          <section class="hud-card">
+            <div class="hud-eyebrow">Tick</div>
+            <strong id="hud-tick">0</strong>
+            <div id="hud-resources"></div>
+          </section>
+          <section class="hud-card">
+            <div class="hud-eyebrow">Selection</div>
+            <div id="hud-selected">Nothing selected</div>
+            <div id="hud-link">Link preview disabled</div>
+          </section>
+          <section class="hud-card hud-actions">
+            <button id="fit-map" type="button">Fit map</button>
+            <button id="cancel-link" type="button">Cancel link</button>
+          </section>
+        </aside>
+      </div>
+      <div id="boot-overlay">
+        <div class="overlay-panel">
+          <div class="overlay-kicker">Boot</div>
+          <h2>Starting deterministic core</h2>
+          <p id="boot-message">Preparing Phaser and simulation packages.</p>
+        </div>
+      </div>
+      <div id="error-overlay" hidden>
+        <div class="overlay-panel error-panel">
+          <div class="overlay-kicker">Error</div>
+          <h2>Game failed to start</h2>
+          <pre id="error-message"></pre>
+          <button id="reload-button" type="button">Reload</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+

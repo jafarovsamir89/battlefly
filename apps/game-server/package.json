@@ -1,0 +1,17 @@
+{
+  "name": "@battlefly/game-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@battlefly/networking": "workspace:*",
+    "@battlefly/simulation": "workspace:*",
+    "@battlefly/shared-types": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "echo \"No tests\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}
+
