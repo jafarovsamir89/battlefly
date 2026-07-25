@@ -81,7 +81,8 @@ The first playable milestone is intentionally limited:
 
 Milestone 0 establishes deterministic simulation, typed commands, a 10-sector test map, energy links, powered-node resolution, and a browser client with mouse, touch, and gamepad foundations.
 
-The design source of truth is in [`docs/GAME_VISION.md`](docs/GAME_VISION.md).
+The current product, technical, business, and production source of truth is [`docs/BATTLEFLY_MASTER_PLAN.md`](docs/BATTLEFLY_MASTER_PLAN.md).
+The original sector-based concept is archived in [`docs/GAME_VISION.md`](docs/GAME_VISION.md).
 The initial coding-agent brief is in [`docs/IMPLEMENTATION_PROMPT.md`](docs/IMPLEMENTATION_PROMPT.md).
 
 ## Project principle

@@ -5,7 +5,7 @@ export const MAP_ID = 'vector-fleet-foundation';
 export const MAP_WIDTH = 1600;
 export const MAP_HEIGHT = 900;
 export const TOTAL_SECTORS = 10;
-export const FIXED_TIMESTEP_MS = 1000 / 30;
+export const FIXED_TIMESTEP_MS = 250;
 
 export const DEFAULT_INITIAL_MATTER = 60;
 export const DEFAULT_INITIAL_ENERGY = 20;
@@ -14,6 +14,17 @@ export const LINK_MATTER_COST = 12;
 export const LINK_MAX_LENGTH = 260;
 export const LINK_CAPACITY = 8;
 export const LINK_BASE_INTEGRITY = 100;
+export const EDGE_PROGRESS_MAX = 1000;
+export const SQUADRON_MOVE_PROGRESS_PER_TICK = 250;
+export const SQUADRON_EDGE_ENERGY_COST = 2;
+export const SQUADRON_MAX_ENERGY = 12;
+export const SQUADRON_IDLE_REGEN = 1;
+export const SCOUT_PRODUCTION_REQUIRED_PROGRESS = 4;
+export const SCOUT_PRODUCTION_MATTER_COST = 8;
+export const SCOUT_PRODUCTION_QUEUE_LIMIT = 3;
+export const SECTOR_CAPTURE_REQUIRED_TICKS = 12;
+export const MISSION_DEADLINE_TICKS = 360;
+export const MISSION_OBJECTIVE_SECTOR_ID = 'sector-center-west' as SectorId;
 
 export const NODE_PRIORITY_DEFAULTS: Record<NodeType, number> = {
   'command-core': 100,
@@ -299,4 +310,3 @@ export const TEST_LINK_CANDIDATES = {
     coreToShipyard: ['omega-core', 'omega-shipyard'] as const,
   },
 } as const;
-

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PLAYERS, TEST_LINK_CANDIDATES } from '@battlefly/game-rules';
+import { MISSION_DEADLINE_TICKS, PLAYERS, SECTOR_CAPTURE_REQUIRED_TICKS, TEST_LINK_CANDIDATES } from '@battlefly/game-rules';
 import type {
   CommandId,
   CreateEnergyLinkCommand,
@@ -8,6 +8,9 @@ import type {
   PlayerId,
   RemoveEnergyLinkCommand,
   SectorId,
+  MoveSquadronCommand,
+  QueueSquadronProductionCommand,
+  SquadronId,
 } from '@battlefly/shared-types';
 import {
   checksumWorldState,
@@ -15,6 +18,8 @@ import {
   createSimulationRuntime,
   createSimulationRuntimeFromSnapshot,
   deserializeWorldState,
+  findSectorRoute,
+  isSectorSupplied,
   serializeWorldState,
 } from '../src/runtime.js';
 import { createSnapshotEnvelope, deserializeSnapshot, serializeSnapshot } from '../src/serialization.js';
@@ -59,6 +64,41 @@ const createLinkCommand = (
   },
 });
 
+const createQueueProductionCommand = (
+  commandId: string,
+  shipyardNodeId: string,
+  intendedTick = 0,
+  playerId: PlayerId = PLAYERS.alpha,
+): QueueSquadronProductionCommand => ({
+  type: 'queue-squadron-production',
+  commandId: commandId as CommandId,
+  playerId,
+  intendedTick,
+  protocolVersion,
+  payload: {
+    shipyardNodeId: shipyardNodeId as NodeId,
+    squadronType: 'scout',
+  },
+});
+
+const createMoveSquadronCommand = (
+  commandId: string,
+  squadronId: string,
+  destinationSectorId: string,
+  intendedTick = 0,
+  playerId: PlayerId = PLAYERS.alpha,
+): MoveSquadronCommand => ({
+  type: 'move-squadron',
+  commandId: commandId as CommandId,
+  playerId,
+  intendedTick,
+  protocolVersion,
+  payload: {
+    squadronId: squadronId as SquadronId,
+    destinationSectorId: destinationSectorId as SectorId,
+  },
+});
+
 const removeLinkCommand = (
   commandId: string,
   linkId: string,
@@ -79,14 +119,24 @@ const cloneState = <T>(value: T): T => structuredClone(value);
 
 const reverseCanonicalOrder = (state: WorldStateSnapshot): WorldStateSnapshot => {
   const cloned = cloneState(state) as unknown as MutableWorldState;
-  cloned.players.reverse();
-  cloned.sectors.reverse();
-  cloned.nodes.reverse();
-  cloned.links.reverse();
-  for (const sector of cloned.sectors) {
+  const mutable = cloned as unknown as {
+    players: MutablePlayerState[];
+    sectors: MutableSectorState[];
+    nodes: WorldStateSnapshot['nodes'][number][];
+    links: WorldStateSnapshot['links'][number][];
+    squadrons: WorldStateSnapshot['squadrons'][number][];
+    productionOrders: WorldStateSnapshot['productionOrders'][number][];
+  };
+  mutable.players.reverse();
+  mutable.sectors.reverse();
+  mutable.nodes.reverse();
+  mutable.links.reverse();
+  mutable.squadrons.reverse();
+  mutable.productionOrders.reverse();
+  for (const sector of mutable.sectors) {
     sector.connectedSectorIds = [...sector.connectedSectorIds].reverse();
   }
-  return cloned;
+  return mutable as unknown as WorldStateSnapshot;
 };
 
 const createLowMatterRuntime = () => {
@@ -100,6 +150,13 @@ const createDisconnectedRuntime = () => {
   const alphaCoreSector = initialState.sectors.find((sector) => sector.id === 'sector-alpha-core')!;
   alphaCoreSector.connectedSectorIds = [];
   return createSimulationRuntime({ initialState });
+};
+
+const createPoweredShipyardRuntime = () => {
+  const runtime = createSimulationRuntime({ seed: 1 });
+  expect(runtime.submit(createLinkCommand('power-link', ...TEST_LINK_CANDIDATES.alpha.coreToShipyard)).status).toBe('accepted');
+  runtime.step(1);
+  return runtime;
 };
 
 const expectStateUnchanged = (
@@ -432,5 +489,147 @@ describe('deterministic simulation', () => {
     expect(removeResult.status).toBe('accepted');
     runtime.step(1);
     expect(runtime.state.nodes.find((node) => node.id === 'alpha-mine')!.powerState).toBe('unpowered');
+  });
+
+  it('finds deterministic sector routes with ordinal tie-breaking', () => {
+    const runtime = createSimulationRuntime({ seed: 1 });
+    const route = findSectorRoute(runtime.state.sectors, 'sector-alpha-core' as SectorId, 'sector-alpha-reactor' as SectorId);
+    expect(route).toEqual([
+      'sector-alpha-core',
+      'sector-alpha-relay',
+      'sector-alpha-reactor',
+    ]);
+  });
+
+  it('queues and completes scout production on a powered shipyard', () => {
+    const runtime = createPoweredShipyardRuntime();
+    const matterBefore = runtime.state.players.find((player) => player.id === PLAYERS.alpha)!.resources.matter;
+    const queueResult = runtime.submit(createQueueProductionCommand('production-1', 'alpha-shipyard', runtime.state.tick));
+    expect(queueResult.status).toBe('accepted');
+    expect(runtime.state.productionOrders).toHaveLength(1);
+    expect(runtime.state.productionOrders[0]!.status).toBe('building');
+    expect(runtime.state.players.find((player) => player.id === PLAYERS.alpha)!.resources.matter).toBe(matterBefore - 8);
+
+    runtime.step(5);
+    expect(runtime.state.productionOrders).toHaveLength(0);
+    expect(runtime.state.squadrons).toHaveLength(1);
+    expect(runtime.state.squadrons[0]!.id).toBe('squadron-000001');
+    expect(runtime.state.squadrons[0]!.sectorId).toBe('sector-alpha-core');
+    expect(runtime.state.squadrons[0]!.status).toBe('idle');
+  });
+
+  it('moves squadrons deterministically and regenerates energy only in supplied sectors', () => {
+    const runtime = createPoweredShipyardRuntime();
+    runtime.submit(createQueueProductionCommand('production-1', 'alpha-shipyard', runtime.state.tick));
+    runtime.step(5);
+    const squadronId = runtime.state.squadrons[0]!.id;
+
+    const moveToMine = runtime.submit(createMoveSquadronCommand('move-1', squadronId, 'sector-alpha-mine', runtime.state.tick));
+    expect(moveToMine.status).toBe('accepted');
+    expect(runtime.state.squadrons[0]!.status).toBe('moving');
+
+    runtime.step(4);
+    expect(runtime.state.squadrons[0]!.sectorId).toBe('sector-alpha-mine');
+    expect(runtime.state.squadrons[0]!.status).toBe('idle');
+    expect(runtime.state.squadrons[0]!.energy).toBe(10);
+    expect(isSectorSupplied(runtime.state, PLAYERS.alpha, 'sector-alpha-mine' as SectorId)).toBe(false);
+
+    runtime.step(2);
+    expect(runtime.state.squadrons[0]!.energy).toBe(10);
+
+    const moveBack = runtime.submit(createMoveSquadronCommand('move-2', squadronId, 'sector-alpha-core', runtime.state.tick));
+    expect(moveBack.status).toBe('accepted');
+    runtime.step(4);
+    expect(runtime.state.squadrons[0]!.sectorId).toBe('sector-alpha-core');
+    expect(runtime.state.squadrons[0]!.status).toBe('idle');
+    expect(runtime.state.squadrons[0]!.energy).toBe(8);
+    runtime.step(2);
+    expect(runtime.state.squadrons[0]!.energy).toBe(10);
+    expect(isSectorSupplied(runtime.state, PLAYERS.alpha, 'sector-alpha-core' as SectorId)).toBe(true);
+  });
+
+  it('rejects invalid squadron commands without mutating state', () => {
+    const runtime = createPoweredShipyardRuntime();
+    runtime.submit(createQueueProductionCommand('production-1', 'alpha-shipyard', runtime.state.tick));
+    runtime.step(5);
+    const squadronId = runtime.state.squadrons[0]!.id;
+    const before = serializeWorldState(runtime.state);
+
+    const unknownSquadron = runtime.submit(createMoveSquadronCommand('move-unknown', 'squadron-missing', 'sector-alpha-mine', runtime.state.tick));
+    expect(unknownSquadron.status).toBe('rejected');
+    if (unknownSquadron.status === 'rejected') {
+      expect(unknownSquadron.reason).toBe('unknown-squadron');
+    }
+    expect(serializeWorldState(runtime.state)).toEqual(before);
+
+    const alreadyThere = runtime.submit(createMoveSquadronCommand('move-same', squadronId, 'sector-alpha-core', runtime.state.tick));
+    expect(alreadyThere.status).toBe('rejected');
+    if (alreadyThere.status === 'rejected') {
+      expect(alreadyThere.reason).toBe('already-in-sector');
+    }
+
+    const moveAccepted = runtime.submit(createMoveSquadronCommand('move-busy', squadronId, 'sector-alpha-mine', runtime.state.tick));
+    expect(moveAccepted.status).toBe('accepted');
+    const busyReject = runtime.submit(createMoveSquadronCommand('move-busy-2', squadronId, 'sector-alpha-core', runtime.state.tick));
+    expect(busyReject.status).toBe('rejected');
+    if (busyReject.status === 'rejected') {
+      expect(busyReject.reason).toBe('squadron-busy');
+    }
+  });
+
+  it('supports snapshot continuation for building production and moving squadrons', () => {
+    const runtime = createPoweredShipyardRuntime();
+    const control = createPoweredShipyardRuntime();
+    runtime.submit(createQueueProductionCommand('production-1', 'alpha-shipyard', runtime.state.tick));
+    control.submit(createQueueProductionCommand('production-1', 'alpha-shipyard', control.state.tick));
+    runtime.step(5);
+    control.step(5);
+    const createdSquadronId = runtime.state.squadrons[0]!.id;
+    const moveResult = runtime.submit(createMoveSquadronCommand('move-1', createdSquadronId, 'sector-alpha-mine', runtime.state.tick));
+    const controlMoveResult = control.submit(createMoveSquadronCommand('move-1', createdSquadronId, 'sector-alpha-mine', control.state.tick));
+    expect(moveResult.status).toBe('accepted');
+    expect(controlMoveResult.status).toBe('accepted');
+
+    runtime.step(2);
+    control.step(2);
+
+    const snapshot = runtime.snapshot();
+    const restored = createSimulationRuntimeFromSnapshot(snapshot);
+    const restoredControl = createSimulationRuntimeFromSnapshot(control.snapshot());
+
+    restored.step(2);
+    restoredControl.step(2);
+
+    expect(restored.state).toEqual(restoredControl.state);
+    expect(checksumWorldState(restored.state)).toBe(checksumWorldState(restoredControl.state));
+  });
+
+  it('captures the objective sector and completes the mission deterministically', () => {
+    const runtime = createPoweredShipyardRuntime();
+    runtime.submit(createQueueProductionCommand('production-capture', 'alpha-shipyard', runtime.state.tick));
+    runtime.step(4);
+    const squadronId = runtime.state.squadrons[0]!.id;
+
+    const move = runtime.submit(
+      createMoveSquadronCommand('move-objective', squadronId, 'sector-center-west', runtime.state.tick),
+    );
+    expect(move.status).toBe('accepted');
+    runtime.step(8);
+    expect(runtime.state.squadrons[0]!.sectorId).toBe('sector-center-west');
+
+    const captureEvents = runtime.step(SECTOR_CAPTURE_REQUIRED_TICKS);
+    expect(runtime.state.sectors.find((sector) => sector.id === 'sector-center-west')!.owner).toBe(PLAYERS.alpha);
+    expect(runtime.state.mission.status).toBe('victory');
+    expect(captureEvents.some((event) => event.type === 'sector-captured')).toBe(true);
+    expect(captureEvents.some((event) => event.type === 'mission-completed')).toBe(true);
+  });
+
+  it('loses the mission when the deterministic deadline expires', () => {
+    const runtime = createSimulationRuntime({ seed: 1 });
+    const events = runtime.step(MISSION_DEADLINE_TICKS);
+
+    expect(runtime.state.tick).toBe(MISSION_DEADLINE_TICKS);
+    expect(runtime.state.mission.status).toBe('defeat');
+    expect(events.filter((event) => event.type === 'mission-completed')).toHaveLength(1);
   });
 });

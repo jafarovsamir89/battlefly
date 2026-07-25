@@ -32,14 +32,21 @@ textarea {
 }
 
 #shell {
-  position: relative;
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
   width: 100%;
   height: 100%;
 }
 
 #game {
-  position: absolute;
-  inset: 0;
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 22px;
 }
 
 #game canvas {
@@ -49,13 +56,13 @@ textarea {
 }
 
 #hud {
-  position: absolute;
-  top: max(12px, env(safe-area-inset-top));
-  left: max(12px, env(safe-area-inset-left));
-  width: min(320px, calc(100vw - 24px));
+  grid-column: 1;
+  grid-row: 1;
+  min-height: 0;
   display: grid;
-  gap: 12px;
-  pointer-events: none;
+  align-content: start;
+  gap: 8px;
+  overflow-y: auto;
 }
 
 .hud-card,
@@ -67,9 +74,8 @@ textarea {
 }
 
 .hud-card {
-  border-radius: 18px;
-  padding: 14px;
-  pointer-events: auto;
+  border-radius: 16px;
+  padding: 12px;
 }
 
 .hud-card h1 {
@@ -88,11 +94,35 @@ textarea {
 }
 
 #hud-status,
+#hud-mission,
+#hud-countdown,
 #hud-selected,
 #hud-link,
+#hud-squadrons,
+#hud-production,
 #hud-resources,
 #hud-tick {
   color: #dbeafe;
+}
+
+#hud-status {
+  min-height: 3.8em;
+  margin-bottom: 0;
+  line-height: 1.35;
+}
+
+.mission-card {
+  border-color: rgba(251, 191, 36, 0.38);
+}
+
+#hud-mission {
+  display: block;
+  margin: 6px 0;
+  color: #fde68a;
+}
+
+#hud-countdown {
+  font-size: 13px;
 }
 
 #hud-tick {
@@ -116,14 +146,35 @@ textarea {
   background: rgba(8, 47, 73, 0.72);
 }
 
+.hud-actions button:disabled {
+  opacity: 0.45;
+}
+
+#hud-squadrons,
+#hud-production {
+  display: grid;
+  gap: 4px;
+  max-height: 150px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 #boot-overlay,
-#error-overlay {
+#error-overlay,
+#mission-overlay {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
   padding: 24px;
   background: rgba(2, 6, 23, 0.66);
+}
+
+#boot-overlay[hidden],
+#error-overlay[hidden],
+#mission-overlay[hidden] {
+  display: none;
 }
 
 .overlay-panel {
@@ -147,9 +198,41 @@ textarea {
   white-space: pre-wrap;
 }
 
-@media (max-width: 720px) {
-  #hud {
-    width: calc(100vw - 24px);
-  }
+.mission-result-panel {
+  text-align: center;
+  border-color: rgba(103, 232, 249, 0.45);
 }
 
+#restart-mission {
+  min-height: 44px;
+  padding: 0 24px;
+  border: 1px solid rgba(103, 232, 249, 0.4);
+  border-radius: 12px;
+  color: #e0f2fe;
+  background: #075985;
+}
+
+@media (max-width: 720px) {
+  #shell {
+    display: block;
+    padding: 0;
+  }
+
+  #game {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+
+  #hud {
+    position: absolute;
+    inset: auto 12px 12px;
+    max-height: 44vh;
+    pointer-events: none;
+  }
+
+  .hud-card {
+    pointer-events: auto;
+  }
+}

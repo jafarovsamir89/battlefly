@@ -1,5 +1,9 @@
 import Phaser from 'phaser';
-import { FIXED_TIMESTEP_MS, PLAYERS } from '@battlefly/game-rules';
+import {
+  FIXED_TIMESTEP_MS,
+  PLAYERS,
+  SECTOR_CAPTURE_REQUIRED_TICKS,
+} from '../../../../packages/game-rules/src/index.js';
 import {
   createFocusNavigationState,
   createLinkInteractionState,
@@ -7,10 +11,20 @@ import {
   focusedNodeId,
   moveFocus,
   updateLinkPreview,
-} from '@battlefly/input';
-import { createSimulationRuntime } from '@battlefly/simulation';
-import type { NodeId, NodeState, SectorState, SimulationCommand } from '@battlefly/shared-types';
-import { buildHudViewModel } from '@battlefly/ui-core';
+} from '../../../../packages/input/src/index.js';
+import { createSimulationRuntime } from '../../../../packages/simulation/src/index.js';
+import type {
+  MoveSquadronCommand,
+  NodeId,
+  NodeState,
+  QueueSquadronProductionCommand,
+  SectorId,
+  SectorState,
+  SimulationCommand,
+  SquadronId,
+  SquadronState,
+} from '../../../../packages/shared-types/src/index.js';
+import { buildHudViewModel } from '../../../../packages/ui-core/src/index.js';
 
 const PLAYER_ID = PLAYERS.alpha;
 
@@ -23,20 +37,33 @@ export class StrategyMapScene extends Phaser.Scene {
   private commandCounter = 0;
   private selectedNodeId: NodeId | null = null;
   private selectedSectorId: SectorState['id'] | null = null;
+  private selectedSquadronId: SquadronId | null = null;
+  private hoveredSectorId: SectorId | null = null;
   private linkState = createLinkInteractionState();
   private focusState = createFocusNavigationState([]);
   private backgroundGraphics!: Phaser.GameObjects.Graphics;
   private sectorGraphics!: Phaser.GameObjects.Graphics;
   private linkGraphics!: Phaser.GameObjects.Graphics;
   private previewGraphics!: Phaser.GameObjects.Graphics;
+  private squadronGraphics = new Map<SquadronId, Phaser.GameObjects.Arc>();
+  private squadronLabels = new Map<SquadronId, Phaser.GameObjects.Text>();
   private nodeGraphics = new Map<NodeId, Phaser.GameObjects.Arc>();
   private nodeLabels = new Map<NodeId, Phaser.GameObjects.Text>();
   private statusText!: Phaser.GameObjects.Text;
   private fitButton!: HTMLButtonElement | null;
   private cancelButton!: HTMLButtonElement | null;
+  private queueScoutButton!: HTMLButtonElement | null;
+  private moveSquadronButton!: HTMLButtonElement | null;
+  private restartMissionButton!: HTMLButtonElement | null;
+  private actionStatus = '';
+  private missionResultShown = false;
   private lastGamepadButtons: boolean[] = [];
   private readonly fitMapHandler = (): void => this.fitMap();
   private readonly cancelLinkHandler = (): void => this.cancelLinkInteraction();
+  private readonly queueScoutHandler = (): void => this.queueScoutProduction();
+  private readonly moveSquadronHandler = (): void => this.moveSelectedSquadron();
+  private readonly restartMissionHandler = (): void => window.location.reload();
+  private readonly resizeHandler = (): void => this.fitMap();
 
   constructor() {
     super('StrategyMapScene');
@@ -68,12 +95,15 @@ export class StrategyMapScene extends Phaser.Scene {
     this.createBackdrop();
     this.createSectorLabels();
     this.createNodeSprites();
+    this.createSquadronSprites();
     this.bindPointerControls();
     this.bindKeyboardControls();
     this.bindDomButtons();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.handleShutdown, this);
     this.events.once(Phaser.Scenes.Events.DESTROY, this.handleShutdown, this);
     this.focusState = createFocusNavigationState(this.getOwnedNodeIds());
+    this.scale.on(Phaser.Scale.Events.RESIZE, this.resizeHandler);
+    this.time.delayedCall(0, () => this.fitMap());
     this.syncHud();
     this.renderWorld();
   }
@@ -84,12 +114,16 @@ export class StrategyMapScene extends Phaser.Scene {
       this.runtime.step(1);
       this.accumulator -= FIXED_TIMESTEP_MS;
     }
+    this.syncSquadronSprites();
     if (this.focusState.orderedNodeIds.length === 0) {
       this.focusState = createFocusNavigationState(this.getOwnedNodeIds());
     }
     this.pollGamepad();
     if (this.selectedNodeId && !this.getOwnedNodeIds().includes(this.selectedNodeId)) {
       this.selectedNodeId = null;
+    }
+    if (this.selectedSquadronId && !this.runtime.state.squadrons.some((squadron) => squadron.id === this.selectedSquadronId)) {
+      this.selectedSquadronId = null;
     }
     this.syncHud();
     this.renderWorld();
@@ -126,7 +160,7 @@ export class StrategyMapScene extends Phaser.Scene {
       const nodeGraphics = this.add
         .arc(node.position.x, node.position.y, 26, 0, 360, false, node.owner === PLAYER_ID ? 0x0284c7 : 0xef4444, 1)
         .setStrokeStyle(2, 0xe2e8f0);
-      nodeGraphics.setInteractive(new Phaser.Geom.Circle(0, 0, 26), Phaser.Geom.Circle.Contains);
+      nodeGraphics.setInteractive();
       nodeGraphics.on('pointerdown', () => this.handleNodePointerDown(node.id));
       nodeGraphics.on('pointerover', () => this.handleHover(node.id));
       nodeGraphics.on('pointerout', () => this.handleHover(null));
@@ -143,20 +177,63 @@ export class StrategyMapScene extends Phaser.Scene {
     }
   }
 
+  private createSquadronSprites(): void {
+    for (const squadron of this.runtime.state.squadrons) {
+      this.createSquadronSprite(squadron);
+    }
+  }
+
+  private createSquadronSprite(squadron: SquadronState): void {
+    const sector = this.runtime.state.sectors.find((entry) => entry.id === squadron.sectorId);
+    if (!sector) {
+      return;
+    }
+    const sprite = this.add
+      .arc(sector.center.x, sector.center.y + 78, 16, 0, 360, false, 0x22c55e, 1)
+      .setStrokeStyle(2, 0xe2e8f0);
+    sprite.setInteractive();
+    sprite.on('pointerdown', () => this.handleSquadronPointerDown(squadron.id));
+    sprite.on('pointerover', () => this.handleSquadronHover(squadron.id));
+    sprite.on('pointerout', () => this.handleSquadronHover(null));
+    this.squadronGraphics.set(squadron.id, sprite);
+
+    const label = this.add
+      .text(sector.center.x, sector.center.y + 100, this.labelForSquadron(squadron), {
+        fontFamily: 'Trebuchet MS, sans-serif',
+        fontSize: '11px',
+        color: '#e2e8f0',
+      })
+      .setOrigin(0.5);
+    this.squadronLabels.set(squadron.id, label);
+  }
+
   private bindPointerControls(): void {
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
       const worldPoint = pointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
-      this.linkState = updateLinkPreview(this.linkState, this.findNodeAt(worldPoint.x, worldPoint.y));
+      const targetNodeId = this.findNodeAt(worldPoint.x, worldPoint.y);
+      if (targetNodeId) {
+        this.linkState = updateLinkPreview(this.linkState, targetNodeId);
+        this.hoveredSectorId = this.findSectorAt(worldPoint.x, worldPoint.y);
+        return;
+      }
+      this.hoveredSectorId = this.findSectorAt(worldPoint.x, worldPoint.y);
+      this.linkState = updateLinkPreview(this.linkState, null);
     });
 
     this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
       const worldPoint = pointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
       const targetNodeId = this.findNodeAt(worldPoint.x, worldPoint.y);
-      if (this.linkState.isActive && this.linkState.sourceNodeId) {
-        const result = finishLinkInteraction(this.linkState, targetNodeId);
-        this.linkState = result.nextState;
-        if (result.intent?.type === 'confirm-link') {
-          this.submitLinkCommand(result.intent.fromNodeId, result.intent.toNodeId);
+      const targetSquadronId = this.findSquadronAt(worldPoint.x, worldPoint.y);
+      const targetSectorId = this.findSectorAt(worldPoint.x, worldPoint.y);
+      if (targetNodeId) {
+        return;
+      }
+      if (targetSquadronId) {
+        this.selectSquadron(targetSquadronId);
+      } else if (targetSectorId) {
+        this.selectSector(targetSectorId);
+        if (this.selectedSquadronId && targetSectorId !== this.getSelectedSquadron()?.sectorId) {
+          this.submitMoveSquadronCommand(this.selectedSquadronId, targetSectorId);
         }
       }
     });
@@ -171,7 +248,7 @@ export class StrategyMapScene extends Phaser.Scene {
     let dragStartX = 0;
     let dragStartY = 0;
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (this.findNodeAt(pointer.worldX, pointer.worldY)) {
+      if (this.findNodeAt(pointer.worldX, pointer.worldY) || this.findSquadronAt(pointer.worldX, pointer.worldY) || this.findSectorAt(pointer.worldX, pointer.worldY)) {
         return;
       }
       dragging = true;
@@ -230,13 +307,22 @@ export class StrategyMapScene extends Phaser.Scene {
   private bindDomButtons(): void {
     this.fitButton = document.getElementById('fit-map') as HTMLButtonElement | null;
     this.cancelButton = document.getElementById('cancel-link') as HTMLButtonElement | null;
+    this.queueScoutButton = document.getElementById('queue-scout') as HTMLButtonElement | null;
+    this.moveSquadronButton = document.getElementById('move-squadron') as HTMLButtonElement | null;
+    this.restartMissionButton = document.getElementById('restart-mission') as HTMLButtonElement | null;
     this.fitButton?.addEventListener('click', this.fitMapHandler);
     this.cancelButton?.addEventListener('click', this.cancelLinkHandler);
+    this.queueScoutButton?.addEventListener('click', this.queueScoutHandler);
+    this.moveSquadronButton?.addEventListener('click', this.moveSquadronHandler);
+    this.restartMissionButton?.addEventListener('click', this.restartMissionHandler);
   }
 
   private fitMap(): void {
+    const viewportWidth = Math.max(1, this.scale.width);
+    const viewportHeight = Math.max(1, this.scale.height);
+    const zoom = Math.min(viewportWidth / 1600, viewportHeight / 900) * 0.96;
     this.cameras.main.centerOn(800, 450);
-    this.cameras.main.setZoom(1);
+    this.cameras.main.setZoom(Phaser.Math.Clamp(zoom, 0.5, 1.2));
   }
 
   private focusNextNode(direction: 1 | -1): void {
@@ -296,9 +382,30 @@ export class StrategyMapScene extends Phaser.Scene {
     this.linkState = createLinkInteractionState();
   }
 
+  private selectSector(sectorId: SectorId | null): void {
+    this.selectedSectorId = sectorId;
+  }
+
+  private selectSquadron(squadronId: SquadronId | null): void {
+    this.selectedSquadronId = squadronId;
+    const squadron = squadronId ? this.runtime.state.squadrons.find((entry) => entry.id === squadronId) ?? null : null;
+    if (squadron) {
+      this.selectedSectorId = squadron.sectorId;
+    }
+  }
+
+  private getSelectedSquadron() {
+    return this.selectedSquadronId ? this.runtime.state.squadrons.find((entry) => entry.id === this.selectedSquadronId) ?? null : null;
+  }
+
   private handleNodePointerDown(nodeId: NodeId): void {
-    if (!this.isOwnedNode(nodeId)) {
+    const node = this.runtime.state.nodes.find((entry) => entry.id === nodeId) ?? null;
+    if (!node || !this.isOwnedNode(nodeId)) {
       this.selectedNodeId = nodeId;
+      return;
+    }
+    this.selectedNodeId = nodeId;
+    if (node.type === 'shipyard' && !this.linkState.isActive) {
       return;
     }
     if (!this.linkState.isActive) {
@@ -316,6 +423,50 @@ export class StrategyMapScene extends Phaser.Scene {
     if (this.linkState.isActive) {
       this.linkState = updateLinkPreview(this.linkState, nodeId);
     }
+  }
+
+  private handleSquadronPointerDown(squadronId: SquadronId): void {
+    this.selectSquadron(squadronId);
+  }
+
+  private handleSquadronHover(squadronId: SquadronId | null): void {
+    this.hoveredSectorId = squadronId ? this.runtime.state.squadrons.find((entry) => entry.id === squadronId)?.sectorId ?? this.hoveredSectorId : this.hoveredSectorId;
+  }
+
+  private queueScoutProduction(): void {
+    const shipyard = this.runtime.state.nodes.find(
+      (node) => node.id === this.selectedNodeId && node.type === 'shipyard' && node.owner === PLAYER_ID,
+    );
+    if (!shipyard) {
+      this.setStatus('Select your powered shipyard to queue a scout.');
+      return;
+    }
+    this.commandCounter += 1;
+    const result = this.runtime.submit({
+      type: 'queue-squadron-production',
+      commandId: createCommandId('production', this.commandCounter),
+      playerId: PLAYER_ID,
+      intendedTick: this.runtime.state.tick,
+      protocolVersion: this.runtime.state.protocolVersion,
+      payload: {
+        shipyardNodeId: shipyard.id,
+        squadronType: 'scout',
+      },
+    } satisfies QueueSquadronProductionCommand);
+    this.setStatus(result.status === 'accepted' ? 'Scout production queued.' : `Production rejected: ${result.reason}`);
+  }
+
+  private moveSelectedSquadron(destinationSectorId: SectorId | null = this.selectedSectorId): void {
+    const squadron = this.getSelectedSquadron();
+    if (!squadron) {
+      this.setStatus('Select a squadron first.');
+      return;
+    }
+    if (!destinationSectorId) {
+      this.setStatus('Select a destination sector.');
+      return;
+    }
+    this.submitMoveSquadronCommand(squadron.id, destinationSectorId);
   }
 
   private submitLinkCommand(fromNodeId: NodeId, toNodeId: NodeId): void {
@@ -338,7 +489,29 @@ export class StrategyMapScene extends Phaser.Scene {
     }
   }
 
+  private submitMoveSquadronCommand(squadronId: SquadronId, destinationSectorId: SectorId): void {
+    this.commandCounter += 1;
+    const result = this.runtime.submit({
+      type: 'move-squadron',
+      commandId: createCommandId('move', this.commandCounter),
+      playerId: PLAYER_ID,
+      intendedTick: this.runtime.state.tick,
+      protocolVersion: this.runtime.state.protocolVersion,
+      payload: {
+        squadronId,
+        destinationSectorId,
+      },
+    } satisfies MoveSquadronCommand);
+    this.setStatus(result.status === 'accepted' ? 'Squadron moving.' : `Move rejected: ${result.reason}`);
+  }
+
   private setStatus(message: string): void {
+    this.actionStatus = message;
+    this.time.delayedCall(2200, () => {
+      if (this.actionStatus === message) {
+        this.actionStatus = '';
+      }
+    });
     if (this.statusText) {
       this.statusText.setText(message);
     }
@@ -347,6 +520,10 @@ export class StrategyMapScene extends Phaser.Scene {
   private handleShutdown(): void {
     this.fitButton?.removeEventListener('click', this.fitMapHandler);
     this.cancelButton?.removeEventListener('click', this.cancelLinkHandler);
+    this.queueScoutButton?.removeEventListener('click', this.queueScoutHandler);
+    this.moveSquadronButton?.removeEventListener('click', this.moveSquadronHandler);
+    this.restartMissionButton?.removeEventListener('click', this.restartMissionHandler);
+    this.scale.off(Phaser.Scale.Events.RESIZE, this.resizeHandler);
     this.input.removeAllListeners();
     this.input.keyboard?.removeAllListeners();
     this.lastGamepadButtons = [];
@@ -356,6 +533,46 @@ export class StrategyMapScene extends Phaser.Scene {
     return this.runtime.state.nodes.filter((node) => node.owner === PLAYER_ID).map((node) => node.id);
   }
 
+  private syncSquadronSprites(): void {
+    const state = this.runtime.state;
+    for (const [squadronId, sprite] of this.squadronGraphics) {
+      const squadron = state.squadrons.find((entry) => entry.id === squadronId);
+      const label = this.squadronLabels.get(squadronId);
+      if (!squadron) {
+        sprite.destroy();
+        label?.destroy();
+        this.squadronGraphics.delete(squadronId);
+        this.squadronLabels.delete(squadronId);
+        continue;
+      }
+      const sector = state.sectors.find((entry) => entry.id === squadron.sectorId);
+      if (!sector) {
+        continue;
+      }
+      sprite.setPosition(sector.center.x, sector.center.y + 78);
+      sprite.setFillStyle(
+        squadron.status === 'moving'
+          ? 0x22c55e
+          : squadron.status === 'waiting-for-energy'
+            ? 0xf59e0b
+            : 0x38bdf8,
+        1,
+      );
+      sprite.setStrokeStyle(this.selectedSquadronId === squadron.id ? 4 : 2, this.selectedSquadronId === squadron.id ? 0xfbbf24 : 0xe2e8f0);
+      label?.setPosition(sector.center.x, sector.center.y + 100);
+      if (label) {
+        label.setText(this.labelForSquadron(squadron));
+      }
+    }
+
+    for (const squadron of state.squadrons) {
+      if (this.squadronGraphics.has(squadron.id)) {
+        continue;
+      }
+      this.createSquadronSprite(squadron);
+    }
+  }
+
   private isOwnedNode(nodeId: NodeId): boolean {
     return this.runtime.state.nodes.some((node) => node.id === nodeId && node.owner === PLAYER_ID);
   }
@@ -363,6 +580,21 @@ export class StrategyMapScene extends Phaser.Scene {
   private findNodeAt(x: number, y: number): NodeId | null {
     const node = this.runtime.state.nodes.find((entry) => Phaser.Math.Distance.Between(entry.position.x, entry.position.y, x, y) <= 28);
     return node ? node.id : null;
+  }
+
+  private findSquadronAt(x: number, y: number): SquadronId | null {
+    const squadron = this.runtime.state.squadrons.find((entry) => {
+      const sector = this.runtime.state.sectors.find((sectorEntry) => sectorEntry.id === entry.sectorId);
+      return sector ? Phaser.Math.Distance.Between(sector.center.x, sector.center.y + 78, x, y) <= 18 : false;
+    });
+    return squadron ? squadron.id : null;
+  }
+
+  private findSectorAt(x: number, y: number): SectorId | null {
+    const sector = this.runtime.state.sectors.find(
+      (entry) => x >= entry.bounds.x && x <= entry.bounds.x + entry.bounds.width && y >= entry.bounds.y && y <= entry.bounds.y + entry.bounds.height,
+    );
+    return sector ? sector.id : null;
   }
 
   private labelForNode(type: NodeState['type']): string {
@@ -382,6 +614,11 @@ export class StrategyMapScene extends Phaser.Scene {
     }
   }
 
+  private labelForSquadron(squadron: SquadronState): string {
+    const progress = squadron.status === 'capturing' ? ` ${squadron.captureProgress}/${SECTOR_CAPTURE_REQUIRED_TICKS}` : '';
+    return `Scout ${squadron.id.slice(-3)} · ${squadron.status}${progress} · ${squadron.energy}/${squadron.maxEnergy}`;
+  }
+
   private drawSector(sector: SectorState): void {
     const color = sector.owner === PLAYER_ID ? 0x0f172a : sector.owner === 'neutral' ? 0x111827 : 0x2a1220;
     this.sectorGraphics.lineStyle(1, sector.owner === PLAYER_ID ? 0x38bdf8 : 0x475569, 0.38);
@@ -394,6 +631,28 @@ export class StrategyMapScene extends Phaser.Scene {
     const state = this.runtime.state;
     this.linkGraphics.clear();
     this.previewGraphics.clear();
+    this.sectorGraphics.clear();
+    for (const sector of state.sectors) {
+      const color =
+        this.selectedSectorId === sector.id
+          ? 0x1d4ed8
+          : this.hoveredSectorId === sector.id
+            ? 0x0f766e
+            : sector.owner === PLAYER_ID
+              ? 0x0f172a
+              : sector.owner === 'neutral'
+                ? 0x111827
+              : 0x2a1220;
+      const isObjective = sector.id === state.mission.objectiveSectorId;
+      this.sectorGraphics.lineStyle(
+        isObjective ? 4 : 1,
+        isObjective ? 0xfbbf24 : sector.owner === PLAYER_ID ? 0x38bdf8 : 0x475569,
+        this.selectedSectorId === sector.id || isObjective ? 0.9 : 0.38,
+      );
+      this.sectorGraphics.fillStyle(color, this.selectedSectorId === sector.id ? 0.52 : 0.34);
+      this.sectorGraphics.fillRoundedRect(sector.bounds.x, sector.bounds.y, sector.bounds.width, sector.bounds.height, 22);
+      this.sectorGraphics.strokeRoundedRect(sector.bounds.x, sector.bounds.y, sector.bounds.width, sector.bounds.height, 22);
+    }
 
     for (const link of state.links) {
       const fromNode = state.nodes.find((node) => node.id === link.fromNodeId);
@@ -407,6 +666,23 @@ export class StrategyMapScene extends Phaser.Scene {
       this.linkGraphics.moveTo(fromNode.position.x, fromNode.position.y);
       this.linkGraphics.lineTo(toNode.position.x, toNode.position.y);
       this.linkGraphics.strokePath();
+    }
+
+    for (const squadron of state.squadrons) {
+      const sector = state.sectors.find((entry) => entry.id === squadron.sectorId);
+      if (!sector) {
+        continue;
+      }
+      const target = this.selectedSquadronId === squadron.id && this.selectedSectorId && this.selectedSectorId !== squadron.sectorId
+        ? state.sectors.find((entry) => entry.id === this.selectedSectorId)
+        : null;
+      if (target) {
+        this.previewGraphics.lineStyle(2, 0x86efac, 0.8);
+        this.previewGraphics.beginPath();
+        this.previewGraphics.moveTo(sector.center.x, sector.center.y);
+        this.previewGraphics.lineTo(target.center.x, target.center.y);
+        this.previewGraphics.strokePath();
+      }
     }
 
     if (this.linkState.isActive && this.linkState.sourceNodeId) {
@@ -443,6 +719,23 @@ export class StrategyMapScene extends Phaser.Scene {
         label.setPosition(node.position.x, node.position.y + 40);
       }
     }
+
+    for (const squadron of state.squadrons) {
+      const graphics = this.squadronGraphics.get(squadron.id);
+      const label = this.squadronLabels.get(squadron.id);
+      const sector = state.sectors.find((entry) => entry.id === squadron.sectorId);
+      if (!graphics || !label || !sector) {
+        continue;
+      }
+      graphics.setPosition(sector.center.x, sector.center.y + 78);
+      graphics.setFillStyle(
+        squadron.status === 'moving' ? 0x22c55e : squadron.status === 'waiting-for-energy' ? 0xf59e0b : 0x38bdf8,
+        1,
+      );
+      graphics.setStrokeStyle(this.selectedSquadronId === squadron.id ? 4 : 2, this.selectedSquadronId === squadron.id ? 0xfbbf24 : 0xe2e8f0);
+      label.setPosition(sector.center.x, sector.center.y + 100);
+      label.setText(this.labelForSquadron(squadron));
+    }
   }
 
   private syncHud(): void {
@@ -466,8 +759,22 @@ export class StrategyMapScene extends Phaser.Scene {
     const hudTick = document.getElementById('hud-tick');
     const hudResources = document.getElementById('hud-resources');
     const hudStatus = document.getElementById('hud-status');
+    const hudMission = document.getElementById('hud-mission');
+    const hudCountdown = document.getElementById('hud-countdown');
     const hudSelected = document.getElementById('hud-selected');
     const hudLink = document.getElementById('hud-link');
+    const squadronSummary = state.squadrons
+      .map(
+        (squadron) =>
+          `${squadron.id.slice(-3)}:${squadron.status}:${squadron.energy}/${squadron.maxEnergy} @ ${squadron.sectorId}`,
+      )
+      .join('<br/>');
+    const productionSummary = state.productionOrders
+      .map(
+        (order) =>
+          `${order.id.slice(-3)}:${order.status}:${order.progress}/${order.requiredProgress} ${order.squadronType} @ ${order.shipyardNodeId}`,
+      )
+      .join('<br/>');
 
     if (hudTick) {
       hudTick.textContent = String(hud.tick);
@@ -478,19 +785,96 @@ export class StrategyMapScene extends Phaser.Scene {
         .join('');
     }
     if (hudStatus) {
-      hudStatus.textContent = this.linkState.isActive
-        ? 'Link mode active. Drag from one owned node to another.'
-        : 'Select a node, then drag to a linked node. Enter/Space confirms on keyboard and gamepad.';
+      hudStatus.textContent = this.currentInstruction(state);
+    }
+    if (hudMission) {
+      hudMission.textContent = state.mission.status === 'active' ? 'Capture the gold Center West sector' : state.mission.status === 'victory' ? 'Sector secured' : 'Omega breached the network';
+    }
+    if (hudCountdown) {
+      const ticksRemaining = Math.max(0, state.mission.deadlineTick - state.tick);
+      const secondsRemaining = Math.ceil((ticksRemaining * FIXED_TIMESTEP_MS) / 1000);
+      hudCountdown.textContent = state.mission.status === 'active' ? `Omega breach in ${secondsRemaining}s` : state.mission.status.toUpperCase();
     }
     if (hudSelected) {
-      hudSelected.textContent = hud.selectedNode
-        ? `${hud.selectedNode.label} (${hud.selectedNode.powered ? 'powered' : 'offline'})`
-        : 'Nothing selected';
+      const squadron = this.getSelectedSquadron();
+      if (squadron) {
+        hudSelected.textContent = `Squadron ${squadron.id} (${squadron.status}) in ${squadron.sectorId}`;
+      } else {
+        hudSelected.textContent = hud.selectedNode
+          ? `${hud.selectedNode.label} (${hud.selectedNode.powered ? 'powered' : 'offline'})`
+          : 'Nothing selected';
+      }
     }
     if (hudLink) {
       hudLink.textContent = hud.linkPreview
         ? `Preview: ${hud.linkPreview.fromNodeId} -> ${hud.linkPreview.toNodeId ?? '...'} | ${hud.linkPreview.isValid ? 'valid' : 'invalid'} | cost ${hud.linkPreview.matterCost}`
         : 'Link preview disabled';
+    }
+    const squadronSection = document.getElementById('hud-squadrons');
+    if (squadronSection) {
+      squadronSection.innerHTML = squadronSummary || 'No squadrons yet';
+    }
+    const productionSection = document.getElementById('hud-production');
+    if (productionSection) {
+      productionSection.innerHTML = productionSummary || 'No production queued';
+    }
+    if (this.queueScoutButton) {
+      this.queueScoutButton.disabled = !hud.selectedNode || hud.selectedNode.type !== 'shipyard' || !hud.selectedNode.powered;
+    }
+    if (this.moveSquadronButton) {
+      this.moveSquadronButton.disabled = !this.getSelectedSquadron() || !this.selectedSectorId;
+    }
+    this.syncMissionResult(state.mission.status);
+  }
+
+  private currentInstruction(state: ReturnType<typeof createSimulationRuntime>['state']): string {
+    if (this.actionStatus) {
+      return this.actionStatus;
+    }
+    if (this.linkState.isActive && this.linkState.sourceNodeId) {
+      return 'Connection mode: click a second blue node. Connect Core to Shipyard first.';
+    }
+    const shipyard = state.nodes.find((node) => node.id === 'alpha-shipyard');
+    const shipyardLinked = state.links.some(
+      (link) => link.fromNodeId === 'alpha-shipyard' || link.toNodeId === 'alpha-shipyard',
+    );
+    if (!shipyardLinked) {
+      return 'Step 1: click the blue Core, then click the blue Shipyard.';
+    }
+    if (shipyard?.powerState !== 'powered') {
+      return 'Power is resolving. The Shipyard will come online on the next tick.';
+    }
+    if (state.productionOrders.length === 0 && state.squadrons.length === 0) {
+      return 'Step 2: click the powered Shipyard, then press Build scout.';
+    }
+    if (state.productionOrders.length > 0) {
+      return 'Scout construction in progress. Hold the line.';
+    }
+    const capturing = state.squadrons.find((squadron) => squadron.status === 'capturing');
+    if (capturing) {
+      return `Capturing Center West: ${capturing.captureProgress}/${SECTOR_CAPTURE_REQUIRED_TICKS}.`;
+    }
+    return 'Step 3: click your Scout, then click the gold Center West sector.';
+  }
+
+  private syncMissionResult(status: 'active' | 'victory' | 'defeat'): void {
+    if (status === 'active' || this.missionResultShown) {
+      return;
+    }
+    this.missionResultShown = true;
+    const overlay = document.getElementById('mission-overlay');
+    const title = document.getElementById('mission-result-title');
+    const message = document.getElementById('mission-result-message');
+    if (title) {
+      title.textContent = status === 'victory' ? 'Center West secured' : 'Network breach';
+    }
+    if (message) {
+      message.textContent = status === 'victory'
+        ? 'Your scout established the first forward sector before Omega could break through.'
+        : 'Omega reached the network first. Build and deploy the scout before the countdown expires.';
+    }
+    if (overlay) {
+      overlay.hidden = false;
     }
   }
 }

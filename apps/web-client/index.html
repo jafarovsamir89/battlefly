@@ -12,8 +12,13 @@
         <aside id="hud">
           <section class="hud-card">
             <div class="hud-eyebrow">Battlefly / Vector Fleet</div>
-            <h1>Deterministic foundation</h1>
+            <h1>Operation First Light</h1>
             <p id="hud-status">Loading simulation...</p>
+          </section>
+          <section class="hud-card mission-card">
+            <div class="hud-eyebrow">Objective</div>
+            <strong id="hud-mission">Capture Center West</strong>
+            <div id="hud-countdown">Omega breach in 90s</div>
           </section>
           <section class="hud-card">
             <div class="hud-eyebrow">Tick</div>
@@ -25,9 +30,19 @@
             <div id="hud-selected">Nothing selected</div>
             <div id="hud-link">Link preview disabled</div>
           </section>
+          <section class="hud-card">
+            <div class="hud-eyebrow">Squadrons</div>
+            <div id="hud-squadrons">No squadrons yet</div>
+          </section>
+          <section class="hud-card">
+            <div class="hud-eyebrow">Production</div>
+            <div id="hud-production">No production queued</div>
+          </section>
           <section class="hud-card hud-actions">
-            <button id="fit-map" type="button">Fit map</button>
-            <button id="cancel-link" type="button">Cancel link</button>
+            <button id="fit-map" type="button">Center map</button>
+            <button id="cancel-link" type="button">Cancel connection</button>
+            <button id="queue-scout" type="button">Build scout · 8 matter</button>
+            <button id="move-squadron" type="button">Send to selected sector</button>
           </section>
         </aside>
       </div>
@@ -46,8 +61,15 @@
           <button id="reload-button" type="button">Reload</button>
         </div>
       </div>
+      <div id="mission-overlay" hidden>
+        <div class="overlay-panel mission-result-panel">
+          <div class="overlay-kicker">Mission complete</div>
+          <h2 id="mission-result-title">Sector secured</h2>
+          <p id="mission-result-message"></p>
+          <button id="restart-mission" type="button">Play again</button>
+        </div>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
-
