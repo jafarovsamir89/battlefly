@@ -1,5 +1,7 @@
 # Master prompt for the coding agent
 
+> **Архивный prompt Milestone 0.** Не использовать для продолжения продуктовой разработки после reset 25 июля 2026 года. Новый источник истины: [`BATTLEFLY_MASTER_PLAN.md`](BATTLEFLY_MASTER_PLAN.md).
+
 Ты работаешь в репозитории `jafarovsamir89/battlefly`.
 
 Ты выступаешь одновременно как:
