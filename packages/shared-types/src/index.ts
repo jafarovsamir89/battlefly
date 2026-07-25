@@ -30,8 +30,9 @@ export type SquadronType = 'scout';
 export type LinkState = 'active' | 'overloaded' | 'damaged' | 'offline';
 export type PowerState = 'powered' | 'unpowered';
 export type CommandStatus = 'accepted' | 'rejected';
-export type SquadronStatus = 'idle' | 'moving' | 'waiting-for-energy';
+export type SquadronStatus = 'idle' | 'moving' | 'waiting-for-energy' | 'capturing';
 export type ProductionOrderStatus = 'queued' | 'building' | 'paused';
+export type MissionStatus = 'active' | 'victory' | 'defeat';
 
 export type CommandRejectionReason =
   | 'protocol-version-mismatch'
@@ -265,6 +266,23 @@ export interface SquadronArrivedEvent extends SimulationEventBase {
   };
 }
 
+export interface SectorCapturedEvent extends SimulationEventBase {
+  readonly type: 'sector-captured';
+  readonly payload: {
+    readonly sectorId: SectorId;
+    readonly playerId: PlayerId;
+    readonly squadronId: SquadronId;
+  };
+}
+
+export interface MissionCompletedEvent extends SimulationEventBase {
+  readonly type: 'mission-completed';
+  readonly payload: {
+    readonly status: Exclude<MissionStatus, 'active'>;
+    readonly objectiveSectorId: SectorId;
+  };
+}
+
 export type SimulationEvent =
   | LinkCreatedEvent
   | LinkRemovedEvent
@@ -280,7 +298,9 @@ export type SimulationEvent =
   | SquadronMoveStartedEvent
   | SquadronEnteredSectorEvent
   | SquadronEnergyDepletedEvent
-  | SquadronArrivedEvent;
+  | SquadronArrivedEvent
+  | SectorCapturedEvent
+  | MissionCompletedEvent;
 
 export interface PlayerResources {
   readonly matter: number;
@@ -332,7 +352,14 @@ export interface SquadronState {
   readonly energy: number;
   readonly maxEnergy: number;
   readonly status: SquadronStatus;
+  readonly captureProgress: number;
   readonly createdAtTick: number;
+}
+
+export interface MissionState {
+  readonly objectiveSectorId: SectorId;
+  readonly deadlineTick: number;
+  readonly status: MissionStatus;
 }
 
 export interface ProductionOrderState {
@@ -374,6 +401,7 @@ export interface WorldState {
   readonly productionOrders: readonly ProductionOrderState[];
   readonly squadronSequence: number;
   readonly productionOrderSequence: number;
+  readonly mission: MissionState;
 }
 
 export interface SnapshotEnvelope {

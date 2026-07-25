@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import './styles.css';
-import { FIXED_TIMESTEP_MS, MAP_HEIGHT, MAP_WIDTH } from '@battlefly/game-rules';
+import { FIXED_TIMESTEP_MS, MAP_HEIGHT, MAP_WIDTH } from '../../../packages/game-rules/src/index.js';
 import { BootScene } from './scenes/BootScene.js';
 import { MainMenuScene } from './scenes/MainMenuScene.js';
 import { StrategyMapScene } from './scenes/StrategyMapScene.js';

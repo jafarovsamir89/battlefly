@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PLAYERS, TEST_LINK_CANDIDATES } from '@battlefly/game-rules';
+import { MISSION_DEADLINE_TICKS, PLAYERS, SECTOR_CAPTURE_REQUIRED_TICKS, TEST_LINK_CANDIDATES } from '@battlefly/game-rules';
 import type {
   CommandId,
   CreateEnergyLinkCommand,
@@ -602,5 +602,34 @@ describe('deterministic simulation', () => {
 
     expect(restored.state).toEqual(restoredControl.state);
     expect(checksumWorldState(restored.state)).toBe(checksumWorldState(restoredControl.state));
+  });
+
+  it('captures the objective sector and completes the mission deterministically', () => {
+    const runtime = createPoweredShipyardRuntime();
+    runtime.submit(createQueueProductionCommand('production-capture', 'alpha-shipyard', runtime.state.tick));
+    runtime.step(4);
+    const squadronId = runtime.state.squadrons[0]!.id;
+
+    const move = runtime.submit(
+      createMoveSquadronCommand('move-objective', squadronId, 'sector-center-west', runtime.state.tick),
+    );
+    expect(move.status).toBe('accepted');
+    runtime.step(8);
+    expect(runtime.state.squadrons[0]!.sectorId).toBe('sector-center-west');
+
+    const captureEvents = runtime.step(SECTOR_CAPTURE_REQUIRED_TICKS);
+    expect(runtime.state.sectors.find((sector) => sector.id === 'sector-center-west')!.owner).toBe(PLAYERS.alpha);
+    expect(runtime.state.mission.status).toBe('victory');
+    expect(captureEvents.some((event) => event.type === 'sector-captured')).toBe(true);
+    expect(captureEvents.some((event) => event.type === 'mission-completed')).toBe(true);
+  });
+
+  it('loses the mission when the deterministic deadline expires', () => {
+    const runtime = createSimulationRuntime({ seed: 1 });
+    const events = runtime.step(MISSION_DEADLINE_TICKS);
+
+    expect(runtime.state.tick).toBe(MISSION_DEADLINE_TICKS);
+    expect(runtime.state.mission.status).toBe('defeat');
+    expect(events.filter((event) => event.type === 'mission-completed')).toHaveLength(1);
   });
 });

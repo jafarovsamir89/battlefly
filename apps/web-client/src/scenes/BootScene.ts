@@ -17,8 +17,11 @@ export class BootScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
     this.time.delayedCall(120, () => {
-      this.scene.start('MainMenuScene');
+      const bootOverlay = document.getElementById('boot-overlay');
+      if (bootOverlay) {
+        bootOverlay.hidden = true;
+      }
+      this.scene.start('StrategyMapScene');
     });
   }
 }
-

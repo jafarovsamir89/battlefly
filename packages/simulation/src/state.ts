@@ -6,11 +6,14 @@ import {
   LINK_CAPACITY,
   LINK_MATTER_COST,
   MAP_ID,
+  MISSION_DEADLINE_TICKS,
+  MISSION_OBJECTIVE_SECTOR_ID,
   NODE_PRIORITY_DEFAULTS,
   NODE_RULES,
   SCOUT_PRODUCTION_MATTER_COST,
   SCOUT_PRODUCTION_QUEUE_LIMIT,
   SCOUT_PRODUCTION_REQUIRED_PROGRESS,
+  SECTOR_CAPTURE_REQUIRED_TICKS,
   PLAYERS,
   SQUADRON_EDGE_ENERGY_COST,
   SQUADRON_IDLE_REGEN,
@@ -103,7 +106,14 @@ type MutableSquadronState = {
   energy: number;
   maxEnergy: number;
   status: SquadronState['status'];
+  captureProgress: number;
   createdAtTick: number;
+};
+
+type MutableMissionState = {
+  objectiveSectorId: SectorId;
+  deadlineTick: number;
+  status: WorldState['mission']['status'];
 };
 
 type MutableProductionOrderState = {
@@ -133,6 +143,7 @@ export interface MutableWorldState {
   productionOrders: MutableProductionOrderState[];
   squadronSequence: number;
   productionOrderSequence: number;
+  mission: MutableMissionState;
 }
 
 export interface SimulationRuntime {
@@ -305,6 +316,11 @@ const createBaseState = (options: SimulationRuntimeOptions = {}): MutableWorldSt
     productionOrders: [],
     squadronSequence: 0,
     productionOrderSequence: 0,
+    mission: {
+      objectiveSectorId: MISSION_OBJECTIVE_SECTOR_ID,
+      deadlineTick: MISSION_DEADLINE_TICKS,
+      status: 'active',
+    },
   };
 };
 
@@ -342,6 +358,7 @@ const createMutableWorldState = (state: WorldState): MutableWorldState => {
     productionOrders: cloneProductionOrders((canonical.productionOrders ?? []) as readonly MutableProductionOrderState[]),
     squadronSequence: canonical.squadronSequence ?? 0,
     productionOrderSequence: canonical.productionOrderSequence ?? 0,
+    mission: { ...canonical.mission },
   };
 };
 
@@ -546,6 +563,7 @@ export const advanceOneTick = (state: MutableWorldState): readonly SimulationEve
   applyResourceTick(state, powerResolution.powerByNodeId, events);
   processProductionOrders(state, powerResolution.powerByNodeId, events);
   processSquadrons(state, events);
+  resolveMission(state, events);
   updateLinkStates(state, powerResolution.powerByNodeId);
   state.tick += 1;
   return events;
@@ -611,6 +629,7 @@ const createSquadron = (
     energy: SQUADRON_MAX_ENERGY,
     maxEnergy: SQUADRON_MAX_ENERGY,
     status: 'idle',
+    captureProgress: 0,
     createdAtTick: state.tick,
   };
 };
@@ -742,6 +761,28 @@ const processSquadrons = (state: MutableWorldState, events: SimulationEvent[]): 
       squadron.energy = Math.min(squadron.maxEnergy, squadron.energy + SQUADRON_IDLE_REGEN);
     }
 
+    if (squadron.status === 'capturing') {
+      const sector = getSectorById(state, squadron.sectorId);
+      if (!sector || sector.owner !== 'neutral') {
+        squadron.status = 'idle';
+        squadron.captureProgress = 0;
+      } else {
+        squadron.captureProgress += 1;
+        if (squadron.captureProgress >= SECTOR_CAPTURE_REQUIRED_TICKS) {
+          sector.owner = squadron.owner;
+          squadron.status = 'idle';
+          squadron.captureProgress = 0;
+          appendEvent(state, events, 'sector-captured', {
+            sectorId: sector.id,
+            playerId: squadron.owner,
+            squadronId: squadron.id,
+          });
+        }
+      }
+      nextSquadrons.push(squadron);
+      continue;
+    }
+
     if (squadron.status === 'waiting-for-energy' || squadron.status === 'moving') {
       const route = squadron.routeSectorIds;
       const nextRouteIndex = squadron.routeIndex + 1;
@@ -754,6 +795,7 @@ const processSquadrons = (state: MutableWorldState, events: SimulationEvent[]): 
         squadron.routeIndex = 0;
         squadron.edgeProgress = 0;
         squadron.edgeEnergyPaid = false;
+        squadron.captureProgress = 0;
         nextSquadrons.push(squadron);
         continue;
       }
@@ -793,6 +835,7 @@ const processSquadrons = (state: MutableWorldState, events: SimulationEvent[]): 
           squadron.destinationSectorId = null;
           squadron.routeSectorIds = [];
           squadron.routeIndex = 0;
+          squadron.captureProgress = 0;
           appendEvent(state, events, 'squadron-arrived', {
             squadronId: squadron.id,
             sectorId: nextSectorId,
@@ -806,12 +849,37 @@ const processSquadrons = (state: MutableWorldState, events: SimulationEvent[]): 
       squadron.edgeEnergyPaid = false;
       squadron.destinationSectorId = null;
       squadron.routeSectorIds = [];
+      const sector = getSectorById(state, squadron.sectorId);
+      if (sector?.owner === 'neutral' && state.mission.status === 'active') {
+        squadron.status = 'capturing';
+        squadron.captureProgress = 1;
+      } else {
+        squadron.captureProgress = 0;
+      }
     }
 
     nextSquadrons.push(squadron);
   }
 
   state.squadrons = sortById(nextSquadrons);
+};
+
+const resolveMission = (state: MutableWorldState, events: SimulationEvent[]): void => {
+  if (state.mission.status !== 'active') {
+    return;
+  }
+  const objective = getSectorById(state, state.mission.objectiveSectorId);
+  if (objective?.owner === PLAYERS.alpha) {
+    state.mission.status = 'victory';
+  } else if (state.tick + 1 >= state.mission.deadlineTick) {
+    state.mission.status = 'defeat';
+  } else {
+    return;
+  }
+  appendEvent(state, events, 'mission-completed', {
+    status: state.mission.status,
+    objectiveSectorId: state.mission.objectiveSectorId,
+  });
 };
 
 const applyCreateEnergyLinkCommand = (
@@ -1033,6 +1101,7 @@ const applyMoveSquadronCommand = (
   squadron.routeIndex = 0;
   squadron.edgeProgress = 0;
   squadron.edgeEnergyPaid = false;
+  squadron.captureProgress = 0;
   squadron.status = 'moving';
   state.squadrons = sortById(state.squadrons);
 
@@ -1249,6 +1318,7 @@ export const serializeWorldState = (state: WorldState): WorldState => ({
   links: cloneLinks(state.links as readonly MutableLinkState[]),
   squadrons: cloneSquadrons(state.squadrons as readonly MutableSquadronState[]),
   productionOrders: cloneProductionOrders(state.productionOrders as readonly MutableProductionOrderState[]),
+  mission: { ...state.mission },
 });
 
 export const deserializeWorldState = (value: WorldState): WorldState =>
@@ -1285,8 +1355,10 @@ export const deserializeWorldState = (value: WorldState): WorldState =>
     squadrons: value.squadrons.map((squadron) => ({
       ...squadron,
       routeSectorIds: [...squadron.routeSectorIds],
+      captureProgress: squadron.captureProgress ?? 0,
     })),
     productionOrders: value.productionOrders.map((order) => ({ ...order })),
+    mission: { ...value.mission },
   });
 
 export const checksumWorldState = (state: WorldState): string => {
