@@ -5,6 +5,7 @@ export {
   checksumWorldState,
   createInitialWorldState,
   createSimulationRuntime,
+  createSimulationRuntimeFromSnapshot,
   deserializeWorldState,
   distance,
   rejected,

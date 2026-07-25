@@ -103,6 +103,7 @@ export interface SimulationRuntime {
 export interface SimulationRuntimeOptions {
   readonly seed?: number;
   readonly matchId?: MatchId;
+  readonly initialState?: WorldState;
 }
 
 const NODE_TYPE_ORDER: Record<NodeState['type'], number> = {
@@ -241,18 +242,64 @@ const createBaseState = (options: SimulationRuntimeOptions = {}): MutableWorldSt
   };
 };
 
+const createMutableWorldState = (state: WorldState): MutableWorldState => {
+  const canonical = serializeWorldState(state);
+  return {
+    protocolVersion: canonical.protocolVersion,
+    matchId: canonical.matchId,
+    mapId: canonical.mapId,
+    seed: canonical.seed,
+    tick: canonical.tick,
+    eventSequence: canonical.eventSequence,
+    linkSequence: canonical.linkSequence,
+    players: canonical.players.map((player) => ({
+      id: player.id,
+      name: player.name,
+      resources: { ...player.resources },
+    })),
+    sectors: canonical.sectors.map((sector) => ({
+      id: sector.id,
+      kind: sector.kind,
+      owner: sector.owner,
+      index: sector.index,
+      label: sector.label,
+      center: { ...sector.center },
+      bounds: { ...sector.bounds },
+      connectedSectorIds: [...sector.connectedSectorIds],
+    })),
+    nodes: canonical.nodes.map((node) => ({
+      ...node,
+      position: { ...node.position },
+    })),
+    links: canonical.links.map((link) => ({ ...link })),
+  };
+};
+
 export const createInitialWorldState = (options: SimulationRuntimeOptions = {}): WorldState =>
   serializeWorldState(createBaseState(options));
 
 export const createSimulationRuntime = (options: SimulationRuntimeOptions = {}): SimulationRuntime => {
-  const state = createBaseState(options);
+  return createRuntimeFromState(
+    options.initialState ? createMutableWorldState(options.initialState) : createBaseState(options),
+  );
+};
+
+export const createSimulationRuntimeFromSnapshot = (snapshot: SnapshotEnvelope): SimulationRuntime =>
+  createRuntimeFromState(createMutableWorldState(snapshot.state));
+
+const createRuntimeFromState = (state: MutableWorldState): SimulationRuntime => {
   const queue: SimulationCommand[] = [];
+  const handledCommandIds = new Set<CommandId>();
 
   return {
     get state() {
       return serializeWorldState(state);
     },
     submit(command) {
+      if (handledCommandIds.has(command.commandId) || queue.some((queuedCommand) => queuedCommand.commandId === command.commandId)) {
+        return rejected(command.commandId, 'duplicate-command');
+      }
+      handledCommandIds.add(command.commandId);
       if (command.protocolVersion !== state.protocolVersion) {
         return rejected(command.commandId, 'protocol-version-mismatch');
       }

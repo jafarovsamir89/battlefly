@@ -30,6 +30,7 @@ export type CommandStatus = 'accepted' | 'rejected';
 
 export type CommandRejectionReason =
   | 'protocol-version-mismatch'
+  | 'duplicate-command'
   | 'wrong-player'
   | 'wrong-tick'
   | 'unknown-node'
