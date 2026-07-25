@@ -64,6 +64,22 @@ describe('deterministic simulation', () => {
     expect(runtime.submit(createLinkCommand('command-2', fromNodeId, toNodeId)).status).toBe('rejected');
   });
 
+  it('uses monotonic link ids even after removals', () => {
+    const runtime = createSimulationRuntime({ seed: 1 });
+    const [firstFromNodeId, firstToNodeId] = TEST_LINK_CANDIDATES.alpha.coreToRelay;
+    const [secondFromNodeId, secondToNodeId] = TEST_LINK_CANDIDATES.alpha.relayToMine;
+
+    expect(runtime.submit(createLinkCommand('command-1', firstFromNodeId, firstToNodeId)).status).toBe('accepted');
+    const firstLinkId = runtime.state.links[0]!.id;
+    expect(firstLinkId).toBe('link-000001');
+
+    expect(runtime.submit(removeLinkCommand('command-2', firstLinkId)).status).toBe('accepted');
+    expect(runtime.state.links).toHaveLength(0);
+
+    expect(runtime.submit(createLinkCommand('command-3', secondFromNodeId, secondToNodeId)).status).toBe('accepted');
+    expect(runtime.state.links[0]!.id).toBe('link-000002');
+  });
+
   it('rejects links to enemy nodes', () => {
     const runtime = createSimulationRuntime({ seed: 1 });
     const [fromNodeId] = TEST_LINK_CANDIDATES.alpha.coreToRelay;
@@ -110,5 +126,14 @@ describe('deterministic simulation', () => {
     left.step(3);
     right.step(3);
     expect(checksumWorldState(left.state)).toBe(checksumWorldState(right.state));
+  });
+
+  it('keeps link and event sequences in the serialized state', () => {
+    const runtime = createSimulationRuntime({ seed: 5 });
+    expect(runtime.state.linkSequence).toBe(0);
+    expect(runtime.state.eventSequence).toBe(0);
+    runtime.submit(createLinkCommand('command-1', ...TEST_LINK_CANDIDATES.alpha.coreToRelay));
+    expect(runtime.state.linkSequence).toBe(1);
+    expect(runtime.state.eventSequence).toBeGreaterThan(0);
   });
 });

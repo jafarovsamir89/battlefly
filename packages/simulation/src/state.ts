@@ -85,6 +85,7 @@ export interface MutableWorldState {
   seed: number;
   tick: number;
   eventSequence: number;
+  linkSequence: number;
   players: MutablePlayerState[];
   sectors: MutableSectorState[];
   nodes: MutableNodeState[];
@@ -112,8 +113,15 @@ const NODE_TYPE_ORDER: Record<NodeState['type'], number> = {
   shipyard: 4,
 };
 
+const compareStrings = (left: string, right: string): number => {
+  if (left === right) {
+    return 0;
+  }
+  return left < right ? -1 : 1;
+};
+
 const sortById = <T extends { id: string }>(values: readonly T[]): T[] =>
-  [...values].sort((left, right) => left.id.localeCompare(right.id));
+  [...values].sort((left, right) => compareStrings(left.id, right.id));
 
 const nextEventSequence = (state: MutableWorldState): number => {
   state.eventSequence += 1;
@@ -121,7 +129,7 @@ const nextEventSequence = (state: MutableWorldState): number => {
 };
 
 const createEventId = (sequence: number): EventId => `event-${sequence}` as EventId;
-const createLinkId = (sequence: number): LinkId => `link-${sequence}` as LinkId;
+const createLinkId = (sequence: number): LinkId => `link-${sequence.toString().padStart(6, '0')}` as LinkId;
 
 const compareNodes = (left: MutableNodeState, right: MutableNodeState): number => {
   if (left.priority !== right.priority) {
@@ -131,7 +139,7 @@ const compareNodes = (left: MutableNodeState, right: MutableNodeState): number =
   if (typeDifference !== 0) {
     return typeDifference;
   }
-  return left.id.localeCompare(right.id);
+  return compareStrings(left.id, right.id);
 };
 
 const clonePlayers = (players: readonly MutablePlayerState[]): MutablePlayerState[] =>
@@ -143,7 +151,7 @@ const clonePlayers = (players: readonly MutablePlayerState[]): MutablePlayerStat
 const cloneSectors = (sectors: readonly MutableSectorState[]): MutableSectorState[] =>
   sortById(sectors).map((sector) => ({
     ...sector,
-    connectedSectorIds: [...sector.connectedSectorIds].sort(),
+    connectedSectorIds: [...sector.connectedSectorIds].sort(compareStrings),
   }));
 
 const cloneNodes = (nodes: readonly MutableNodeState[]): MutableNodeState[] =>
@@ -225,6 +233,7 @@ const createBaseState = (options: SimulationRuntimeOptions = {}): MutableWorldSt
     seed,
     tick: 0,
     eventSequence: 0,
+    linkSequence: 0,
     players,
     sectors,
     nodes,
@@ -256,7 +265,7 @@ export const createSimulationRuntime = (options: SimulationRuntimeOptions = {}):
       queue.push(command);
       queue.sort((left, right) =>
         left.intendedTick === right.intendedTick
-          ? left.commandId.localeCompare(right.commandId)
+          ? compareStrings(left.commandId, right.commandId)
           : left.intendedTick - right.intendedTick,
       );
       return accepted(command.commandId);
@@ -306,8 +315,6 @@ export const applyCommandToState = (
       return applyRemoveEnergyLinkCommand(state, command);
     case 'set-node-priority':
       return applySetNodePriorityCommand(state, command);
-    case 'advance-simulation':
-      return applyAdvanceSimulationCommand(state, command);
   }
 };
 
@@ -368,7 +375,7 @@ const applyCreateEnergyLinkCommand = (
   }
 
   const link: MutableLinkState = {
-    id: createLinkId(state.links.length + 1),
+    id: createLinkId(++state.linkSequence),
     owner: command.playerId,
     fromNodeId: fromNode.id,
     toNodeId: toNode.id,
@@ -458,18 +465,6 @@ const applySetNodePriorityCommand = (
   ]);
 };
 
-const applyAdvanceSimulationCommand = (
-  state: MutableWorldState,
-  command: Extract<SimulationCommand, { type: 'advance-simulation' }>,
-): SimulationCommandResult => {
-  const steps = Math.max(0, Math.floor(command.payload.steps));
-  const events: SimulationEvent[] = [];
-  for (let index = 0; index < steps; index += 1) {
-    events.push(...advanceOneTick(state));
-  }
-  return accepted(command.commandId, events);
-};
-
 interface PowerResolution {
   readonly powerByNodeId: ReadonlyMap<NodeId, boolean>;
   readonly events: readonly SimulationEvent[];
@@ -509,8 +504,8 @@ const resolvePower = (state: MutableWorldState): PowerResolution => {
       type: 'power-resolved',
       payload: {
         playerId: player.id,
-        poweredNodeIds: [...poweredNodeIds].sort(),
-        unpoweredNodeIds: [...unpoweredNodeIds].sort(),
+        poweredNodeIds: [...poweredNodeIds].sort(compareStrings),
+        unpoweredNodeIds: [...unpoweredNodeIds].sort(compareStrings),
       },
     });
   }
@@ -596,7 +591,7 @@ const buildAdjacency = (
     toList.push(link.fromNodeId);
   }
   for (const neighbors of adjacency.values()) {
-    neighbors.sort();
+    neighbors.sort(compareStrings);
   }
   return adjacency;
 };
@@ -663,6 +658,7 @@ export const serializeWorldState = (state: WorldState): WorldState => ({
   seed: state.seed,
   tick: state.tick,
   eventSequence: state.eventSequence,
+  linkSequence: state.linkSequence,
   players: clonePlayers(state.players as readonly MutablePlayerState[]),
   sectors: cloneSectors(state.sectors as readonly MutableSectorState[]),
   nodes: cloneNodes(state.nodes as readonly MutableNodeState[]),
@@ -677,6 +673,7 @@ export const deserializeWorldState = (value: WorldState): WorldState =>
     seed: value.seed,
     tick: value.tick,
     eventSequence: value.eventSequence,
+    linkSequence: value.linkSequence,
     players: value.players.map((player) => ({
       id: player.id,
       name: player.name,

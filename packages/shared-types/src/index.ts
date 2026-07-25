@@ -74,18 +74,10 @@ export interface SetNodePriorityCommand extends SimulationCommandBase {
   };
 }
 
-export interface AdvanceSimulationCommand extends SimulationCommandBase {
-  readonly type: 'advance-simulation';
-  readonly payload: {
-    readonly steps: number;
-  };
-}
-
 export type SimulationCommand =
   | CreateEnergyLinkCommand
   | RemoveEnergyLinkCommand
-  | SetNodePriorityCommand
-  | AdvanceSimulationCommand;
+  | SetNodePriorityCommand;
 
 export interface SimulationCommandResultAccepted {
   readonly status: 'accepted';
@@ -214,6 +206,7 @@ export interface WorldState {
   readonly seed: number;
   readonly tick: number;
   readonly eventSequence: number;
+  readonly linkSequence: number;
   readonly players: readonly PlayerState[];
   readonly sectors: readonly SectorState[];
   readonly nodes: readonly NodeState[];
@@ -226,4 +219,3 @@ export interface SnapshotEnvelope {
   readonly checksum: string;
   readonly state: WorldState;
 }
-

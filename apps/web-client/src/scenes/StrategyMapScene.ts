@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { PLAYERS } from '@battlefly/game-rules';
+import { FIXED_TIMESTEP_MS, PLAYERS } from '@battlefly/game-rules';
 import {
   createFocusNavigationState,
   createLinkInteractionState,
@@ -35,6 +35,8 @@ export class StrategyMapScene extends Phaser.Scene {
   private fitButton!: HTMLButtonElement | null;
   private cancelButton!: HTMLButtonElement | null;
   private lastGamepadButtons: boolean[] = [];
+  private readonly fitMapHandler = (): void => this.fitMap();
+  private readonly cancelLinkHandler = (): void => this.cancelLinkInteraction();
 
   constructor() {
     super('StrategyMapScene');
@@ -69,6 +71,8 @@ export class StrategyMapScene extends Phaser.Scene {
     this.bindPointerControls();
     this.bindKeyboardControls();
     this.bindDomButtons();
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.handleShutdown, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.handleShutdown, this);
     this.focusState = createFocusNavigationState(this.getOwnedNodeIds());
     this.syncHud();
     this.renderWorld();
@@ -76,9 +80,9 @@ export class StrategyMapScene extends Phaser.Scene {
 
   update(_: number, delta: number): void {
     this.accumulator += delta;
-    while (this.accumulator >= 1000 / 30) {
+    while (this.accumulator >= FIXED_TIMESTEP_MS) {
       this.runtime.step(1);
-      this.accumulator -= 1000 / 30;
+      this.accumulator -= FIXED_TIMESTEP_MS;
     }
     if (this.focusState.orderedNodeIds.length === 0) {
       this.focusState = createFocusNavigationState(this.getOwnedNodeIds());
@@ -113,8 +117,7 @@ export class StrategyMapScene extends Phaser.Scene {
           fontSize: '14px',
           color: sector.owner === PLAYER_ID ? '#7dd3fc' : '#cbd5e1',
         })
-        .setOrigin(0.5)
-        .setScrollFactor(0);
+        .setOrigin(0.5);
     }
   }
 
@@ -135,8 +138,7 @@ export class StrategyMapScene extends Phaser.Scene {
           fontSize: '11px',
           color: '#e2e8f0',
         })
-        .setOrigin(0.5)
-        .setScrollFactor(0);
+        .setOrigin(0.5);
       this.nodeLabels.set(node.id, label);
     }
   }
@@ -228,8 +230,8 @@ export class StrategyMapScene extends Phaser.Scene {
   private bindDomButtons(): void {
     this.fitButton = document.getElementById('fit-map') as HTMLButtonElement | null;
     this.cancelButton = document.getElementById('cancel-link') as HTMLButtonElement | null;
-    this.fitButton?.addEventListener('click', () => this.fitMap());
-    this.cancelButton?.addEventListener('click', () => this.cancelLinkInteraction());
+    this.fitButton?.addEventListener('click', this.fitMapHandler);
+    this.cancelButton?.addEventListener('click', this.cancelLinkHandler);
   }
 
   private fitMap(): void {
@@ -340,6 +342,14 @@ export class StrategyMapScene extends Phaser.Scene {
     if (this.statusText) {
       this.statusText.setText(message);
     }
+  }
+
+  private handleShutdown(): void {
+    this.fitButton?.removeEventListener('click', this.fitMapHandler);
+    this.cancelButton?.removeEventListener('click', this.cancelLinkHandler);
+    this.input.removeAllListeners();
+    this.input.keyboard?.removeAllListeners();
+    this.lastGamepadButtons = [];
   }
 
   private getOwnedNodeIds(): NodeId[] {

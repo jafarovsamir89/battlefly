@@ -10,6 +10,7 @@ const bootMessage = document.getElementById('boot-message');
 const errorOverlay = document.getElementById('error-overlay');
 const errorMessage = document.getElementById('error-message');
 const reloadButton = document.getElementById('reload-button');
+const lifecycle = new AbortController();
 
 const showError = (message: string): void => {
   if (errorMessage) {
@@ -23,18 +24,41 @@ const showError = (message: string): void => {
   }
 };
 
-window.addEventListener('error', (event) => {
-  showError(event.error instanceof Error ? event.error.stack ?? event.error.message : event.message);
-});
+window.addEventListener(
+  'error',
+  (event) => {
+    showError(event.error instanceof Error ? event.error.stack ?? event.error.message : event.message);
+  },
+  { signal: lifecycle.signal },
+);
 
-window.addEventListener('unhandledrejection', (event) => {
-  const reason = event.reason instanceof Error ? event.reason.stack ?? event.reason.message : String(event.reason);
-  showError(reason);
-});
+window.addEventListener(
+  'unhandledrejection',
+  (event) => {
+    const reason = event.reason instanceof Error ? event.reason.stack ?? event.reason.message : String(event.reason);
+    showError(reason);
+  },
+  { signal: lifecycle.signal },
+);
 
 if (reloadButton) {
-  reloadButton.addEventListener('click', () => window.location.reload());
+  reloadButton.addEventListener(
+    'click',
+    () => {
+      lifecycle.abort();
+      window.location.reload();
+    },
+    { signal: lifecycle.signal },
+  );
 }
+
+window.addEventListener(
+  'beforeunload',
+  () => {
+    lifecycle.abort();
+  },
+  { once: true },
+);
 
 if (bootMessage) {
   bootMessage.textContent = `Preparing fixed timestep at ${Math.round(FIXED_TIMESTEP_MS)}ms.`;
@@ -60,4 +84,3 @@ try {
 } catch (error) {
   showError(error instanceof Error ? error.stack ?? error.message : String(error));
 }
-

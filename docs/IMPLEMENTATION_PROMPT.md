@@ -342,7 +342,7 @@ pnpm lint
 - `CreateEnergyLinkCommand`;
 - `RemoveEnergyLinkCommand`;
 - `SetNodePriorityCommand`;
-- `AdvanceSimulationCommand` только для тестовой инфраструктуры, если нужен.
+- внутренний test-only helper для пошагового прогона симуляции, если нужен.
 
 Каждая команда должна иметь:
 
