@@ -8,6 +8,16 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
   },
+  optimizeDeps: {
+    exclude: [
+      '@battlefly/shared-types',
+      '@battlefly/game-rules',
+      '@battlefly/networking',
+      '@battlefly/input',
+      '@battlefly/ui-core',
+      '@battlefly/simulation',
+    ],
+  },
   resolve: {
     alias: {
       '@battlefly/shared-types': workspace('../../packages/shared-types/src/index.ts'),
@@ -22,4 +32,3 @@ export default defineConfig({
     target: 'es2022',
   },
 });
-

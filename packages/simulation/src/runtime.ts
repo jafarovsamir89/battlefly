@@ -8,6 +8,8 @@ export {
   createSimulationRuntimeFromSnapshot,
   deserializeWorldState,
   distance,
+  findSectorRoute,
+  isSectorSupplied,
   rejected,
   serializeWorldState,
 } from './state.js';

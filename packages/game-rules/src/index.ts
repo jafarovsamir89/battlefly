@@ -14,6 +14,14 @@ export const LINK_MATTER_COST = 12;
 export const LINK_MAX_LENGTH = 260;
 export const LINK_CAPACITY = 8;
 export const LINK_BASE_INTEGRITY = 100;
+export const EDGE_PROGRESS_MAX = 1000;
+export const SQUADRON_MOVE_PROGRESS_PER_TICK = 250;
+export const SQUADRON_EDGE_ENERGY_COST = 2;
+export const SQUADRON_MAX_ENERGY = 12;
+export const SQUADRON_IDLE_REGEN = 1;
+export const SCOUT_PRODUCTION_REQUIRED_PROGRESS = 4;
+export const SCOUT_PRODUCTION_MATTER_COST = 8;
+export const SCOUT_PRODUCTION_QUEUE_LIMIT = 3;
 
 export const NODE_PRIORITY_DEFAULTS: Record<NodeType, number> = {
   'command-core': 100,
@@ -299,4 +307,3 @@ export const TEST_LINK_CANDIDATES = {
     coreToShipyard: ['omega-core', 'omega-shipyard'] as const,
   },
 } as const;
-

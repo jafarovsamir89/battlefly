@@ -90,6 +90,8 @@ textarea {
 #hud-status,
 #hud-selected,
 #hud-link,
+#hud-squadrons,
+#hud-production,
 #hud-resources,
 #hud-tick {
   color: #dbeafe;
@@ -114,6 +116,20 @@ textarea {
   border-radius: 12px;
   color: #e0f2fe;
   background: rgba(8, 47, 73, 0.72);
+}
+
+.hud-actions button:disabled {
+  opacity: 0.45;
+}
+
+#hud-squadrons,
+#hud-production {
+  display: grid;
+  gap: 4px;
+  max-height: 150px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 #boot-overlay,
@@ -152,4 +168,3 @@ textarea {
     width: calc(100vw - 24px);
   }
 }
-

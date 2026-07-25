@@ -1,13 +1,21 @@
 import {
   DEFAULT_INITIAL_ENERGY,
   DEFAULT_INITIAL_MATTER,
+  EDGE_PROGRESS_MAX,
   LINK_BASE_INTEGRITY,
   LINK_CAPACITY,
   LINK_MATTER_COST,
   MAP_ID,
   NODE_PRIORITY_DEFAULTS,
   NODE_RULES,
+  SCOUT_PRODUCTION_MATTER_COST,
+  SCOUT_PRODUCTION_QUEUE_LIMIT,
+  SCOUT_PRODUCTION_REQUIRED_PROGRESS,
   PLAYERS,
+  SQUADRON_EDGE_ENERGY_COST,
+  SQUADRON_IDLE_REGEN,
+  SQUADRON_MAX_ENERGY,
+  SQUADRON_MOVE_PROGRESS_PER_TICK,
   TEST_NODES,
   TEST_SECTORS,
 } from '@battlefly/game-rules';
@@ -20,10 +28,14 @@ import type {
   MatchId,
   NodeId,
   NodeState,
+  ProductionOrderId,
+  ProductionOrderState,
   PlayerId,
   PowerState,
   SectorId,
   SectorState,
+  SquadronId,
+  SquadronState,
   SimulationCommand,
   SimulationCommandResult,
   SimulationEvent,
@@ -78,6 +90,33 @@ type MutableLinkState = {
   matterCost: number;
 };
 
+type MutableSquadronState = {
+  id: SquadronId;
+  owner: PlayerId;
+  type: SquadronState['type'];
+  sectorId: SectorId;
+  destinationSectorId: SectorId | null;
+  routeSectorIds: readonly SectorId[];
+  routeIndex: number;
+  edgeProgress: number;
+  edgeEnergyPaid: boolean;
+  energy: number;
+  maxEnergy: number;
+  status: SquadronState['status'];
+  createdAtTick: number;
+};
+
+type MutableProductionOrderState = {
+  id: ProductionOrderId;
+  playerId: PlayerId;
+  shipyardNodeId: NodeId;
+  squadronType: SquadronState['type'];
+  progress: number;
+  requiredProgress: number;
+  status: ProductionOrderState['status'];
+  createdAtTick: number;
+};
+
 export interface MutableWorldState {
   protocolVersion: number;
   matchId: MatchId;
@@ -90,6 +129,10 @@ export interface MutableWorldState {
   sectors: MutableSectorState[];
   nodes: MutableNodeState[];
   links: MutableLinkState[];
+  squadrons: MutableSquadronState[];
+  productionOrders: MutableProductionOrderState[];
+  squadronSequence: number;
+  productionOrderSequence: number;
 }
 
 export interface SimulationRuntime {
@@ -143,6 +186,12 @@ const compareNodes = (left: MutableNodeState, right: MutableNodeState): number =
   return compareStrings(left.id, right.id);
 };
 
+const compareSquadrons = (left: MutableSquadronState, right: MutableSquadronState): number =>
+  compareStrings(left.id, right.id);
+
+const compareProductionOrders = (left: MutableProductionOrderState, right: MutableProductionOrderState): number =>
+  compareStrings(left.id, right.id);
+
 const clonePlayers = (players: readonly MutablePlayerState[]): MutablePlayerState[] =>
   sortById(players).map((player) => ({
     ...player,
@@ -160,6 +209,19 @@ const cloneNodes = (nodes: readonly MutableNodeState[]): MutableNodeState[] =>
 
 const cloneLinks = (links: readonly MutableLinkState[]): MutableLinkState[] =>
   sortById(links).map((link) => ({ ...link }));
+
+const cloneSquadrons = (squadrons: readonly MutableSquadronState[]): MutableSquadronState[] =>
+  [...squadrons]
+    .sort(compareSquadrons)
+    .map((squadron) => ({
+      ...squadron,
+      routeSectorIds: [...squadron.routeSectorIds],
+    }));
+
+const cloneProductionOrders = (
+  productionOrders: readonly MutableProductionOrderState[],
+): MutableProductionOrderState[] =>
+  [...productionOrders].sort(compareProductionOrders).map((productionOrder) => ({ ...productionOrder }));
 
 const sameLink = (link: MutableLinkState, left: NodeId, right: NodeId): boolean =>
   (link.fromNodeId === left && link.toNodeId === right) || (link.fromNodeId === right && link.toNodeId === left);
@@ -239,6 +301,10 @@ const createBaseState = (options: SimulationRuntimeOptions = {}): MutableWorldSt
     sectors,
     nodes,
     links: [],
+    squadrons: [],
+    productionOrders: [],
+    squadronSequence: 0,
+    productionOrderSequence: 0,
   };
 };
 
@@ -272,8 +338,112 @@ const createMutableWorldState = (state: WorldState): MutableWorldState => {
       position: { ...node.position },
     })),
     links: canonical.links.map((link) => ({ ...link })),
+    squadrons: cloneSquadrons((canonical.squadrons ?? []) as readonly MutableSquadronState[]),
+    productionOrders: cloneProductionOrders((canonical.productionOrders ?? []) as readonly MutableProductionOrderState[]),
+    squadronSequence: canonical.squadronSequence ?? 0,
+    productionOrderSequence: canonical.productionOrderSequence ?? 0,
   };
 };
+
+const getSectorById = (state: MutableWorldState, sectorId: SectorId): MutableSectorState | null =>
+  state.sectors.find((sector) => sector.id === sectorId) ?? null;
+
+const getNodeById = (state: MutableWorldState, nodeId: NodeId): MutableNodeState | null =>
+  state.nodes.find((node) => node.id === nodeId) ?? null;
+
+const getSquadronById = (state: MutableWorldState, squadronId: SquadronId): MutableSquadronState | null =>
+  state.squadrons.find((squadron) => squadron.id === squadronId) ?? null;
+
+const getPlayerById = (state: MutableWorldState, playerId: PlayerId): MutablePlayerState | null =>
+  state.players.find((player) => player.id === playerId) ?? null;
+
+const createSquadronId = (sequence: number): SquadronId => `squadron-${sequence.toString().padStart(6, '0')}` as SquadronId;
+
+const createProductionOrderId = (sequence: number): ProductionOrderId =>
+  `production-${sequence.toString().padStart(6, '0')}` as ProductionOrderId;
+
+type SimulationEventByType = {
+  [K in SimulationEvent['type']]: Extract<SimulationEvent, { type: K }>;
+};
+
+const compareSectorIdsByOrdinal = (
+  left: SectorId,
+  right: SectorId,
+  sectorById: ReadonlyMap<SectorId, { readonly index: number }>,
+): number => {
+  const leftSector = sectorById.get(left);
+  const rightSector = sectorById.get(right);
+  if (leftSector && rightSector) {
+    if (leftSector.index !== rightSector.index) {
+      return leftSector.index - rightSector.index;
+    }
+  }
+  return compareStrings(left, right);
+};
+
+export const findSectorRoute = (
+  sectors: readonly SectorState[],
+  from: SectorId,
+  to: SectorId,
+): readonly SectorId[] | null => {
+  if (from === to) {
+    return [from];
+  }
+  const sectorById = new Map(sectors.map((sector) => [sector.id, sector] as const));
+  const start = sectorById.get(from);
+  const target = sectorById.get(to);
+  if (!start || !target) {
+    return null;
+  }
+
+  const queue: SectorId[] = [from];
+  const visited = new Set<SectorId>([from]);
+  const previous = new Map<SectorId, SectorId>();
+
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    if (currentId === to) {
+      break;
+    }
+    const currentSector = sectorById.get(currentId);
+    if (!currentSector) {
+      continue;
+    }
+    const neighbors = [...currentSector.connectedSectorIds].sort((left, right) =>
+      compareSectorIdsByOrdinal(left, right, sectorById),
+    );
+    for (const neighbor of neighbors) {
+      if (visited.has(neighbor)) {
+        continue;
+      }
+      visited.add(neighbor);
+      previous.set(neighbor, currentId);
+      queue.push(neighbor);
+    }
+  }
+
+  if (!visited.has(to)) {
+    return null;
+  }
+
+  const route: SectorId[] = [to];
+  let cursor = to;
+  while (cursor !== from) {
+    const previousSector = previous.get(cursor);
+    if (!previousSector) {
+      return null;
+    }
+    route.push(previousSector);
+    cursor = previousSector;
+  }
+  route.reverse();
+  return route;
+};
+
+export const isSectorSupplied = (state: WorldState, playerId: PlayerId, sectorId: SectorId): boolean =>
+  state.nodes.some(
+    (node) => node.owner === playerId && node.sectorId === sectorId && node.powerState === 'powered',
+  );
 
 export const createInitialWorldState = (options: SimulationRuntimeOptions = {}): WorldState =>
   serializeWorldState(createBaseState(options));
@@ -362,6 +532,10 @@ export const applyCommandToState = (
       return applyRemoveEnergyLinkCommand(state, command);
     case 'set-node-priority':
       return applySetNodePriorityCommand(state, command);
+    case 'queue-squadron-production':
+      return applyQueueSquadronProductionCommand(state, command);
+    case 'move-squadron':
+      return applyMoveSquadronCommand(state, command);
   }
 };
 
@@ -370,6 +544,8 @@ export const advanceOneTick = (state: MutableWorldState): readonly SimulationEve
   const powerResolution = resolvePower(state);
   events.push(...powerResolution.events);
   applyResourceTick(state, powerResolution.powerByNodeId, events);
+  processProductionOrders(state, powerResolution.powerByNodeId, events);
+  processSquadrons(state, events);
   updateLinkStates(state, powerResolution.powerByNodeId);
   state.tick += 1;
   return events;
@@ -390,6 +566,253 @@ export const accepted = (commandId: CommandId, events: readonly SimulationEvent[
   commandId,
   events,
 });
+
+const createSimulationEvent = <T extends SimulationEvent['type']>(
+  state: MutableWorldState,
+  type: T,
+  payload: SimulationEventByType[T]['payload'],
+): SimulationEventByType[T] => {
+  const sequence = nextEventSequence(state);
+  return {
+    eventId: createEventId(sequence),
+    sequence,
+    tick: state.tick,
+    type,
+    payload,
+  } as SimulationEventByType[T];
+};
+
+const appendEvent = <T extends SimulationEvent['type']>(
+  state: MutableWorldState,
+  events: SimulationEvent[],
+  type: T,
+  payload: SimulationEventByType[T]['payload'],
+): void => {
+  events.push(createSimulationEvent(state, type, payload));
+};
+
+const createSquadron = (
+  state: MutableWorldState,
+  playerId: PlayerId,
+  sectorId: SectorId,
+  type: SquadronState['type'],
+): MutableSquadronState => {
+  state.squadronSequence += 1;
+  return {
+    id: createSquadronId(state.squadronSequence),
+    owner: playerId,
+    type,
+    sectorId,
+    destinationSectorId: null,
+    routeSectorIds: [],
+    routeIndex: 0,
+    edgeProgress: 0,
+    edgeEnergyPaid: false,
+    energy: SQUADRON_MAX_ENERGY,
+    maxEnergy: SQUADRON_MAX_ENERGY,
+    status: 'idle',
+    createdAtTick: state.tick,
+  };
+};
+
+const createProductionOrder = (
+  state: MutableWorldState,
+  playerId: PlayerId,
+  shipyardNodeId: NodeId,
+  squadronType: SquadronState['type'],
+  status: ProductionOrderState['status'],
+): MutableProductionOrderState => {
+  state.productionOrderSequence += 1;
+  return {
+    id: createProductionOrderId(state.productionOrderSequence),
+    playerId,
+    shipyardNodeId,
+    squadronType,
+    progress: 0,
+    requiredProgress: SCOUT_PRODUCTION_REQUIRED_PROGRESS,
+    status,
+    createdAtTick: state.tick,
+  };
+};
+
+const compareProductionOrdersForShipyard = (
+  left: MutableProductionOrderState,
+  right: MutableProductionOrderState,
+): number => {
+  if (left.createdAtTick !== right.createdAtTick) {
+    return left.createdAtTick - right.createdAtTick;
+  }
+  return compareStrings(left.id, right.id);
+};
+
+const processProductionOrders = (
+  state: MutableWorldState,
+  powerByNodeId: ReadonlyMap<NodeId, boolean>,
+  events: SimulationEvent[],
+): void => {
+  const shipyards = state.nodes.filter((node) => node.type === 'shipyard');
+  const remainingOrders: MutableProductionOrderState[] = [];
+
+  for (const shipyard of shipyards) {
+    const powered = powerByNodeId.get(shipyard.id) ?? false;
+    const shipyardOrders = state.productionOrders
+      .filter((order) => order.shipyardNodeId === shipyard.id)
+      .sort(compareProductionOrdersForShipyard);
+    const activeOrder = shipyardOrders[0] ?? null;
+
+    if (activeOrder) {
+      if (!powered) {
+        if (activeOrder.status === 'building') {
+          activeOrder.status = 'paused';
+          appendEvent(state, events, 'production-paused', {
+            productionOrderId: activeOrder.id,
+            shipyardNodeId: shipyard.id,
+          });
+        }
+      } else {
+        if (activeOrder.status === 'queued') {
+          activeOrder.status = 'building';
+          appendEvent(state, events, 'production-started', {
+            productionOrderId: activeOrder.id,
+            shipyardNodeId: shipyard.id,
+            squadronType: activeOrder.squadronType,
+          });
+        } else if (activeOrder.status === 'paused') {
+          activeOrder.status = 'building';
+          appendEvent(state, events, 'production-resumed', {
+            productionOrderId: activeOrder.id,
+            shipyardNodeId: shipyard.id,
+          });
+        }
+
+        if (activeOrder.status === 'building') {
+          activeOrder.progress += 1;
+          if (activeOrder.progress >= activeOrder.requiredProgress) {
+            const squadron = createSquadron(state, activeOrder.playerId, shipyard.sectorId, activeOrder.squadronType);
+            state.squadrons = sortById([...state.squadrons, squadron]);
+            appendEvent(state, events, 'production-completed', {
+              productionOrderId: activeOrder.id,
+              shipyardNodeId: shipyard.id,
+              squadronId: squadron.id,
+            });
+            appendEvent(state, events, 'squadron-created', {
+              squadronId: squadron.id,
+              owner: squadron.owner,
+              typeName: squadron.type,
+              sectorId: squadron.sectorId,
+            });
+            state.productionOrders = state.productionOrders.filter((order) => order.id !== activeOrder.id);
+          }
+        }
+      }
+    }
+
+    for (const order of shipyardOrders.slice(1)) {
+      if (!powered && order.status === 'building') {
+        order.status = 'paused';
+        appendEvent(state, events, 'production-paused', {
+          productionOrderId: order.id,
+          shipyardNodeId: shipyard.id,
+        });
+      }
+      if (powered && order.status === 'paused') {
+        order.status = 'queued';
+      }
+      remainingOrders.push(order);
+    }
+    if (activeOrder && state.productionOrders.includes(activeOrder)) {
+      remainingOrders.push(activeOrder);
+    }
+  }
+
+  state.productionOrders = sortById(
+    remainingOrders.filter((order, index, array) => array.findIndex((entry) => entry.id === order.id) === index),
+  );
+};
+
+const processSquadrons = (state: MutableWorldState, events: SimulationEvent[]): void => {
+  const nextSquadrons: MutableSquadronState[] = [];
+  for (const squadron of sortById(state.squadrons)) {
+    if (!getPlayerById(state, squadron.owner)) {
+      continue;
+    }
+
+    const supplied = isSectorSupplied(state, squadron.owner, squadron.sectorId);
+    if (supplied && squadron.status !== 'moving' && squadron.energy < squadron.maxEnergy) {
+      squadron.energy = Math.min(squadron.maxEnergy, squadron.energy + SQUADRON_IDLE_REGEN);
+    }
+
+    if (squadron.status === 'waiting-for-energy' || squadron.status === 'moving') {
+      const route = squadron.routeSectorIds;
+      const nextRouteIndex = squadron.routeIndex + 1;
+      const destinationSectorId = squadron.destinationSectorId;
+
+      if (!destinationSectorId || route.length < 2 || nextRouteIndex >= route.length) {
+        squadron.status = 'idle';
+        squadron.destinationSectorId = null;
+        squadron.routeSectorIds = [];
+        squadron.routeIndex = 0;
+        squadron.edgeProgress = 0;
+        squadron.edgeEnergyPaid = false;
+        nextSquadrons.push(squadron);
+        continue;
+      }
+
+      if (!squadron.edgeEnergyPaid) {
+        if (squadron.energy < SQUADRON_EDGE_ENERGY_COST) {
+          if (squadron.status !== 'waiting-for-energy') {
+            squadron.status = 'waiting-for-energy';
+            appendEvent(state, events, 'squadron-energy-depleted', {
+              squadronId: squadron.id,
+              sectorId: squadron.sectorId,
+            });
+          }
+          nextSquadrons.push(squadron);
+          continue;
+        }
+
+        squadron.energy -= SQUADRON_EDGE_ENERGY_COST;
+        squadron.edgeEnergyPaid = true;
+        squadron.status = 'moving';
+      }
+
+      squadron.edgeProgress += SQUADRON_MOVE_PROGRESS_PER_TICK;
+      if (squadron.edgeProgress >= EDGE_PROGRESS_MAX) {
+        const nextSectorId = route[nextRouteIndex]!;
+        squadron.sectorId = nextSectorId;
+        squadron.routeIndex = nextRouteIndex;
+        squadron.edgeProgress = 0;
+        squadron.edgeEnergyPaid = false;
+        appendEvent(state, events, 'squadron-entered-sector', {
+          squadronId: squadron.id,
+          sectorId: nextSectorId,
+        });
+
+        if (nextRouteIndex === route.length - 1) {
+          squadron.status = 'idle';
+          squadron.destinationSectorId = null;
+          squadron.routeSectorIds = [];
+          squadron.routeIndex = 0;
+          appendEvent(state, events, 'squadron-arrived', {
+            squadronId: squadron.id,
+            sectorId: nextSectorId,
+          });
+        }
+      }
+    } else {
+      squadron.status = 'idle';
+      squadron.routeIndex = 0;
+      squadron.edgeProgress = 0;
+      squadron.edgeEnergyPaid = false;
+      squadron.destinationSectorId = null;
+      squadron.routeSectorIds = [];
+    }
+
+    nextSquadrons.push(squadron);
+  }
+
+  state.squadrons = sortById(nextSquadrons);
+};
 
 const applyCreateEnergyLinkCommand = (
   state: MutableWorldState,
@@ -509,6 +932,118 @@ const applySetNodePriorityCommand = (
         priority: command.payload.priority,
       },
     },
+  ]);
+};
+
+const applyQueueSquadronProductionCommand = (
+  state: MutableWorldState,
+  command: Extract<SimulationCommand, { type: 'queue-squadron-production' }>,
+): SimulationCommandResult => {
+  if (command.payload.squadronType !== 'scout') {
+    return rejected(command.commandId, 'unsupported-squadron-type');
+  }
+
+  const shipyard = getNodeById(state, command.payload.shipyardNodeId);
+  if (!shipyard) {
+    return rejected(command.commandId, 'unknown-node');
+  }
+  if (shipyard.owner !== command.playerId) {
+    return rejected(command.commandId, 'not-owned');
+  }
+  if (shipyard.type !== 'shipyard') {
+    return rejected(command.commandId, 'wrong-node-type');
+  }
+  if (shipyard.powerState !== 'powered') {
+    return rejected(command.commandId, 'node-unpowered');
+  }
+
+  const player = getPlayerById(state, command.playerId);
+  if (!player || player.resources.matter < SCOUT_PRODUCTION_MATTER_COST) {
+    return rejected(command.commandId, 'insufficient-matter');
+  }
+
+  const ordersForShipyard = state.productionOrders.filter((order) => order.shipyardNodeId === shipyard.id);
+  if (ordersForShipyard.length >= SCOUT_PRODUCTION_QUEUE_LIMIT) {
+    return rejected(command.commandId, 'production-queue-full');
+  }
+
+  const order = createProductionOrder(
+    state,
+    command.playerId,
+    shipyard.id,
+    command.payload.squadronType,
+    ordersForShipyard.length === 0 ? 'building' : 'queued',
+  );
+  state.productionOrders = sortById([...state.productionOrders, order]);
+  replacePlayerResources(state, command.playerId, {
+    matter: player.resources.matter - SCOUT_PRODUCTION_MATTER_COST,
+    energy: player.resources.energy,
+  });
+
+  const events: SimulationEvent[] = [];
+  appendEvent(state, events, 'production-queued', {
+    productionOrderId: order.id,
+    shipyardNodeId: shipyard.id,
+    squadronType: order.squadronType,
+  });
+  if (order.status === 'building') {
+    appendEvent(state, events, 'production-started', {
+      productionOrderId: order.id,
+      shipyardNodeId: shipyard.id,
+      squadronType: order.squadronType,
+    });
+  }
+  return accepted(command.commandId, events);
+};
+
+const applyMoveSquadronCommand = (
+  state: MutableWorldState,
+  command: Extract<SimulationCommand, { type: 'move-squadron' }>,
+): SimulationCommandResult => {
+  const squadron = getSquadronById(state, command.payload.squadronId);
+  if (!squadron) {
+    return rejected(command.commandId, 'unknown-squadron');
+  }
+  if (squadron.owner !== command.playerId) {
+    return rejected(command.commandId, 'not-owned');
+  }
+  if (squadron.status !== 'idle') {
+    return rejected(command.commandId, 'squadron-busy');
+  }
+
+  const destinationSector = getSectorById(state, command.payload.destinationSectorId);
+  if (!destinationSector) {
+    return rejected(command.commandId, 'unknown-sector');
+  }
+  if (squadron.sectorId === destinationSector.id) {
+    return rejected(command.commandId, 'already-in-sector');
+  }
+
+  const route = findSectorRoute(state.sectors, squadron.sectorId, destinationSector.id);
+  if (!route || route.length < 2) {
+    return rejected(command.commandId, 'route-not-found');
+  }
+  if (squadron.energy < SQUADRON_EDGE_ENERGY_COST) {
+    return rejected(command.commandId, 'insufficient-energy');
+  }
+
+  const sourceSectorId = squadron.sectorId;
+  squadron.destinationSectorId = destinationSector.id;
+  squadron.routeSectorIds = [...route];
+  squadron.routeIndex = 0;
+  squadron.edgeProgress = 0;
+  squadron.edgeEnergyPaid = false;
+  squadron.status = 'moving';
+  state.squadrons = sortById(state.squadrons);
+
+  return accepted(command.commandId, [
+    createSimulationEvent(state, 'squadron-move-started', {
+      squadronId: squadron.id,
+      owner: squadron.owner,
+      sourceSectorId,
+      destinationSectorId: destinationSector.id,
+      routeSectorIds: [...route],
+    }),
   ]);
 };
 
@@ -706,10 +1241,14 @@ export const serializeWorldState = (state: WorldState): WorldState => ({
   tick: state.tick,
   eventSequence: state.eventSequence,
   linkSequence: state.linkSequence,
+  squadronSequence: state.squadronSequence,
+  productionOrderSequence: state.productionOrderSequence,
   players: clonePlayers(state.players as readonly MutablePlayerState[]),
   sectors: cloneSectors(state.sectors as readonly MutableSectorState[]),
   nodes: cloneNodes(state.nodes as readonly MutableNodeState[]),
   links: cloneLinks(state.links as readonly MutableLinkState[]),
+  squadrons: cloneSquadrons(state.squadrons as readonly MutableSquadronState[]),
+  productionOrders: cloneProductionOrders(state.productionOrders as readonly MutableProductionOrderState[]),
 });
 
 export const deserializeWorldState = (value: WorldState): WorldState =>
@@ -721,6 +1260,8 @@ export const deserializeWorldState = (value: WorldState): WorldState =>
     tick: value.tick,
     eventSequence: value.eventSequence,
     linkSequence: value.linkSequence,
+    squadronSequence: value.squadronSequence,
+    productionOrderSequence: value.productionOrderSequence,
     players: value.players.map((player) => ({
       id: player.id,
       name: player.name,
@@ -741,6 +1282,11 @@ export const deserializeWorldState = (value: WorldState): WorldState =>
       position: { ...node.position },
     })),
     links: value.links.map((link) => ({ ...link })),
+    squadrons: value.squadrons.map((squadron) => ({
+      ...squadron,
+      routeSectorIds: [...squadron.routeSectorIds],
+    })),
+    productionOrders: value.productionOrders.map((order) => ({ ...order })),
   });
 
 export const checksumWorldState = (state: WorldState): string => {

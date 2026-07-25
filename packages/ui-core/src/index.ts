@@ -1,8 +1,11 @@
 import type {
   LinkStateRecord,
+  ProductionOrderState,
   NodeState,
   PlayerState,
   SectorState,
+  SectorId,
+  SquadronState,
   WorldState,
 } from '@battlefly/shared-types';
 
@@ -29,6 +32,29 @@ export interface LinkPreviewViewModel {
   readonly matterCost: number;
 }
 
+export interface SquadronViewModel {
+  readonly id: SquadronState['id'];
+  readonly owner: SquadronState['owner'];
+  readonly type: SquadronState['type'];
+  readonly sectorId: SquadronState['sectorId'];
+  readonly destinationSectorId: SquadronState['destinationSectorId'];
+  readonly status: SquadronState['status'];
+  readonly energy: number;
+  readonly maxEnergy: number;
+  readonly routeSectorIds: readonly SectorId[];
+  readonly routeIndex: number;
+}
+
+export interface ProductionOrderViewModel {
+  readonly id: ProductionOrderState['id'];
+  readonly playerId: ProductionOrderState['playerId'];
+  readonly shipyardNodeId: ProductionOrderState['shipyardNodeId'];
+  readonly squadronType: ProductionOrderState['squadronType'];
+  readonly progress: number;
+  readonly requiredProgress: number;
+  readonly status: ProductionOrderState['status'];
+}
+
 export interface HudViewModel {
   readonly tick: number;
   readonly mapId: string;
@@ -36,6 +62,8 @@ export interface HudViewModel {
   readonly selectedNode: NodeViewModel | null;
   readonly selectedSector: SectorState | null;
   readonly activeLinks: readonly LinkStateRecord[];
+  readonly squadrons: readonly SquadronViewModel[];
+  readonly productionOrders: readonly ProductionOrderViewModel[];
   readonly linkPreview: LinkPreviewViewModel | null;
 }
 
@@ -83,7 +111,27 @@ export const buildHudViewModel = (
       : null,
     selectedSector,
     activeLinks: state.links,
+    squadrons: state.squadrons.map((squadron) => ({
+      id: squadron.id,
+      owner: squadron.owner,
+      type: squadron.type,
+      sectorId: squadron.sectorId,
+      destinationSectorId: squadron.destinationSectorId,
+      status: squadron.status,
+      energy: squadron.energy,
+      maxEnergy: squadron.maxEnergy,
+      routeSectorIds: [...squadron.routeSectorIds],
+      routeIndex: squadron.routeIndex,
+    })),
+    productionOrders: state.productionOrders.map((order) => ({
+      id: order.id,
+      playerId: order.playerId,
+      shipyardNodeId: order.shipyardNodeId,
+      squadronType: order.squadronType,
+      progress: order.progress,
+      requiredProgress: order.requiredProgress,
+      status: order.status,
+    })),
     linkPreview,
   };
 };
-
